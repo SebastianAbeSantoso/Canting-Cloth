@@ -1,0 +1,50 @@
+# Unreal Engine generated directories
+Binaries/
+Build/
+DerivedDataCache/
+Intermediate/
+Saved/
+LocalBuilds/
+Releases/
+
+# Visual Studio & IDE files
+.vs/
+.idea/
+.vscode/
+*.sln
+*.slnx
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+*.user
+*.vcxproj
+*.vcxproj.*
+*.code-workspace
+
+# Xcode
+*.xcworkspace/
+*.xcodeproj/
+
+# Compiled binaries, symbols, and build artifacts
+*.dll
+*.exe
+*.pdb
+*.obj
+*.lib
+*.exp
+*.app
+*.ipa
+*.apk
+*.aab
+*.dmp
+
+# Unreal Engine logs and temp files
+*.log
+*.uat
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
