@@ -1,5 +1,7 @@
 # Canting Cloth — Core Loop Skeleton (Blueprint Guide)
 
+> **Superseded.** The loop now runs in C++ (`UCraftLoopSubsystem`, `UCraftRules`, `UCraftSettings` in `Source/CantingCloth/`), and the Blueprint loop assets built from this guide have been retired. Keep this page only as a reference for the design (stage order, formulas, time costs). To extend the loop from Blueprint, use **Get CraftLoopSubsystem** and its actions and events, not the steps below.
+
 Goal: one customer (**The Scout**) is playable end to end, and each stage exists and can be advanced:
 
 `Commission → Blueprint → Cloth → Arrange → Cut → Canting → Dye/Reveal → Stitch → Inspect → Deliver → Expedition → Return → (next commission)`
