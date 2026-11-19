@@ -3,28 +3,48 @@
 #include "CraftLoopSubsystem.h"
 #include "CraftRules.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Brushes/SlateRoundedBoxBrush.h"
 #include "Rendering/DrawElements.h"
 #include "Styling/CoreStyle.h"
+#include "Styling/SlateTypes.h"
 
 #define LOCTEXT_NAMESPACE "CraftLoopWidgets"
 
 // ---- Palette ---------------------------------------------------------------------------------------------------------
-// High-contrast text on a near-opaque dark panel; warm accent for the craft, clear red/green for good and bad.
+// Defined in sRGB (what you see on screen). Slate colours are linear, so a "dark" linear value renders far lighter
+// than it reads in code; converting from sRGB keeps the contrast ratios below true.
+//   Text on panel ~16:1, muted text on panel ~11:1, button text on button face ~17:1, disabled ~6:1.
 
 namespace CraftStyle
 {
-	const FLinearColor TextColor(0.97f, 0.95f, 0.91f);
-	const FLinearColor Muted(0.80f, 0.77f, 0.72f);
-	const FLinearColor Accent(1.0f, 0.76f, 0.36f);
-	const FLinearColor Good(0.52f, 0.86f, 0.50f);
-	const FLinearColor Warning(1.0f, 0.50f, 0.40f);
-	const FLinearColor Panel(0.035f, 0.03f, 0.026f, 0.95f);
-	const FLinearColor Cloth(0.93f, 0.89f, 0.80f);
-	const FLinearColor ClothLine(0.55f, 0.50f, 0.42f, 0.45f);
+	FLinearColor SRGB(uint8 R, uint8 G, uint8 B, uint8 A)
+	{
+		return FLinearColor(FColor(R, G, B, A));
+	}
+
+	const FLinearColor TextColor = SRGB(250, 247, 240);
+	const FLinearColor Muted = SRGB(222, 214, 202);
+	const FLinearColor Accent = SRGB(255, 200, 96);
+	const FLinearColor Good = SRGB(146, 230, 138);
+	const FLinearColor Warning = SRGB(255, 138, 116);
+	const FLinearColor Panel = SRGB(16, 13, 11, 245);
+	const FLinearColor Cloth = SRGB(240, 230, 210);
+	const FLinearColor ClothLine = SRGB(150, 136, 116, 140);
+	const FLinearColor ButtonText = SRGB(18, 14, 10);
+	const FLinearColor ButtonDetail = SRGB(58, 46, 32);
+	const FLinearColor DisabledText = SRGB(196, 190, 182);
 
 	FSlateFontInfo Font(int32 Size, bool bBold)
 	{
 		return FCoreStyle::GetDefaultFontStyle(bBold ? TEXT("Bold") : TEXT("Regular"), Size);
+	}
+
+	FSlateFontInfo OutlinedFont(int32 Size)
+	{
+		FSlateFontInfo Result = Font(Size, true);
+		Result.OutlineSettings.OutlineSize = 2;
+		Result.OutlineSettings.OutlineColor = SRGB(10, 8, 6, 230);
+		return Result;
 	}
 
 	const FSlateBrush* WhiteBrush()
@@ -32,16 +52,40 @@ namespace CraftStyle
 		static const FSlateColorBrush Brush(FLinearColor::White);
 		return &Brush;
 	}
+
+	const FButtonStyle& ButtonStyle()
+	{
+		// Solid faces instead of tinting the engine's dark default button image (which turned cream into muddy brown).
+		static const FButtonStyle Style = []()
+		{
+			const FLinearColor Edge = SRGB(10, 8, 6);
+			FButtonStyle S;
+			S.SetNormal(FSlateRoundedBoxBrush(SRGB(250, 238, 212), 6.0f, Edge, 1.5f));
+			S.SetHovered(FSlateRoundedBoxBrush(SRGB(255, 249, 232), 6.0f, SRGB(255, 200, 96), 2.5f));
+			S.SetPressed(FSlateRoundedBoxBrush(SRGB(236, 206, 150), 6.0f, Edge, 2.5f));
+			S.SetDisabled(FSlateRoundedBoxBrush(SRGB(64, 60, 56), 6.0f, SRGB(96, 90, 84), 1.5f));
+			S.SetNormalPadding(FMargin(0.0f));
+			S.SetPressedPadding(FMargin(0.0f, 1.0f, 0.0f, -1.0f));
+			S.SetNormalForeground(FSlateColor(ButtonText));
+			S.SetHoveredForeground(FSlateColor(ButtonText));
+			S.SetPressedForeground(FSlateColor(ButtonText));
+			S.SetDisabledForeground(FSlateColor(DisabledText));
+			return S;
+		}();
+		return Style;
+	}
 }
 
 namespace
 {
+	using CraftStyle::SRGB;
+
 	const FLinearColor PieceColors[] = {
-		FLinearColor(0.80f, 0.42f, 0.22f),
-		FLinearColor(0.24f, 0.52f, 0.72f),
-		FLinearColor(0.46f, 0.66f, 0.28f),
-		FLinearColor(0.66f, 0.40f, 0.70f),
-		FLinearColor(0.78f, 0.62f, 0.20f),
+		SRGB(196, 96, 44),
+		SRGB(44, 118, 176),
+		SRGB(84, 146, 52),
+		SRGB(146, 82, 160),
+		SRGB(176, 132, 24),
 	};
 	constexpr float TrayScale = 0.55f;
 	constexpr float HeaderHeight = 26.0f;
@@ -312,8 +356,8 @@ int32 SCraftArrangeBoard::OnPaint(const FPaintArgs& Args, const FGeometry& Allot
 	}
 	const TArray<FCraftPiecePlacement> Placements = Loop->GetPlacements();
 	const FVector2D SheetSize(Layout.SheetW * Layout.Cell, Layout.SheetH * Layout.Cell);
-	const FSlateFontInfo LabelFont = CraftStyle::Font(12, true);
-	const FSlateFontInfo SmallFont = CraftStyle::Font(11, true);
+	const FSlateFontInfo LabelFont = CraftStyle::Font(14, true);
+	const FSlateFontInfo SmallFont = CraftStyle::OutlinedFont(13);
 
 	// Header labels
 	DrawText(OutDrawElements, LayerId, AllottedGeometry, FVector2D(0.0, 2.0), LOCTEXT("SheetLabel", "Fabric (grain runs top to bottom)"), LabelFont, CraftStyle::Muted);
@@ -332,7 +376,7 @@ int32 SCraftArrangeBoard::OnPaint(const FPaintArgs& Args, const FGeometry& Allot
 		DrawLine(OutDrawElements, LayerId + 1, AllottedGeometry, FVector2D(Layout.SheetOrigin.X, PY), FVector2D(Layout.SheetOrigin.X + SheetSize.X, PY),
 			CraftStyle::ClothLine * FLinearColor(1.0f, 1.0f, 1.0f, 0.5f), 1.0f);
 	}
-	DrawOutline(OutDrawElements, LayerId + 1, AllottedGeometry, Layout.SheetOrigin, SheetSize, FLinearColor(0.45f, 0.40f, 0.33f), 2.0f);
+	DrawOutline(OutDrawElements, LayerId + 1, AllottedGeometry, Layout.SheetOrigin, SheetSize, CraftStyle::SRGB(110, 98, 82), 2.0f);
 
 	// Pieces (placed on the sheet, or waiting in the tray), skipping the one in hand.
 	const int32 PieceLayer = LayerId + 2;
@@ -346,11 +390,11 @@ int32 SCraftArrangeBoard::OnPaint(const FPaintArgs& Args, const FGeometry& Allot
 		const FVector2D Position = PiecePosition(Layout, Index);
 		const FVector2D Size = bPlaced ? PieceSizePx(Layout, Index, Placements[Index].bRotated) : PieceSizePx(Layout, Index, false) * TrayScale;
 		DrawBox(OutDrawElements, PieceLayer, AllottedGeometry, Position, Size, PieceColor(Index));
-		DrawOutline(OutDrawElements, PieceLayer + 1, AllottedGeometry, Position, Size, FLinearColor(0.08f, 0.06f, 0.05f), 2.0f);
+		DrawOutline(OutDrawElements, PieceLayer + 1, AllottedGeometry, Position, Size, CraftStyle::SRGB(12, 10, 8), 2.0f);
 		DrawText(OutDrawElements, PieceLayer + 2, AllottedGeometry, Position + FVector2D(5.0, 3.0), Blueprint.Pieces[Index].Name, SmallFont, FLinearColor::White);
 		if (bPlaced && Placements[Index].bRotated)
 		{
-			DrawText(OutDrawElements, PieceLayer + 2, AllottedGeometry, Position + FVector2D(5.0, 20.0), LOCTEXT("Across", "across grain"), CraftStyle::Font(10), FLinearColor::White);
+			DrawText(OutDrawElements, PieceLayer + 2, AllottedGeometry, Position + FVector2D(5.0, 20.0), LOCTEXT("Across", "across grain"), CraftStyle::OutlinedFont(11), FLinearColor::White);
 		}
 	}
 
@@ -478,11 +522,11 @@ int32 SCraftCutPanel::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedG
 		TArray<FVector2f> Outline = {
 			FVector2f(CenterX - HemHalf, HemY), FVector2f(CenterX - TopHalfWidth, CutTop), FVector2f(CenterX + TopHalfWidth, CutTop), FVector2f(CenterX + HemHalf, HemY) };
 		FSlateDrawElement::MakeLines(OutDrawElements, LayerId + 2, AllottedGeometry.ToPaintGeometry(), Outline, ESlateDrawEffect::None,
-			FLinearColor(0.45f, 0.40f, 0.33f), true, 2.0f);
+			CraftStyle::SRGB(110, 98, 82), true, 2.0f);
 	}
 
 	// Reference marks: short, blueprint, long.
-	const FSlateFontInfo MarkFont = CraftStyle::Font(12, true);
+	const FSlateFontInfo MarkFont = CraftStyle::Font(14, true);
 	const struct { float Length; FText Label; } Marks[] = {
 		{ UCraftRules::MinCutLength, LOCTEXT("MarkShort", "Short") },
 		{ 1.0f, LOCTEXT("MarkStandard", "Blueprint") },
@@ -499,8 +543,8 @@ int32 SCraftCutPanel::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedG
 	const double HemHalf = HalfWidthAt(HemY);
 	DrawLine(OutDrawElements, LayerId + 3, AllottedGeometry, FVector2D(CenterX - HemHalf - 12.0, HemY), FVector2D(CenterX + HemHalf + 12.0, HemY), CraftStyle::Accent, 4.0f);
 	DrawBox(OutDrawElements, LayerId + 3, AllottedGeometry, FVector2D(CenterX + HemHalf + 4.0, HemY - 9.0), FVector2D(18.0, 18.0), CraftStyle::Accent);
-	DrawText(OutDrawElements, LayerId + 4, AllottedGeometry, FVector2D(CenterX - 54.0, CutTop + 8.0), LOCTEXT("DragHem", "Drag the hem"), CraftStyle::Font(12, true),
-		FLinearColor(0.25f, 0.2f, 0.15f));
+	DrawText(OutDrawElements, LayerId + 4, AllottedGeometry, FVector2D(CenterX - 54.0, CutTop + 8.0), LOCTEXT("DragHem", "Drag the hem"), CraftStyle::Font(14, true),
+		CraftStyle::ButtonText);
 	return LayerId + 4;
 }
 
@@ -518,7 +562,7 @@ int32 SCraftGauge::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeom
 	FSlateWindowElementList& OutDrawElements, int32 LayerId, const FWidgetStyle& InWidgetStyle, bool bParentEnabled) const
 {
 	const FVector2D Size(AllottedGeometry.GetLocalSize());
-	DrawBox(OutDrawElements, LayerId, AllottedGeometry, FVector2D::ZeroVector, Size, FLinearColor(0.16f, 0.14f, 0.12f));
+	DrawBox(OutDrawElements, LayerId, AllottedGeometry, FVector2D::ZeroVector, Size, CraftStyle::SRGB(44, 40, 36));
 	for (const FCraftGaugeZone& Zone : Zones)
 	{
 		DrawBox(OutDrawElements, LayerId + 1, AllottedGeometry, FVector2D(Zone.Min * Size.X, 0.0), FVector2D((Zone.Max - Zone.Min) * Size.X, Size.Y), Zone.Color);
@@ -526,7 +570,7 @@ int32 SCraftGauge::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeom
 	const double V = FMath::Clamp(static_cast<double>(Value.Get()), 0.0, 1.0);
 	if (bFill)
 	{
-		DrawBox(OutDrawElements, LayerId + 2, AllottedGeometry, FVector2D(0.0, Size.Y * 0.3), FVector2D(V * Size.X, Size.Y * 0.4), FLinearColor(0.97f, 0.95f, 0.91f, 0.9f));
+		DrawBox(OutDrawElements, LayerId + 2, AllottedGeometry, FVector2D(0.0, Size.Y * 0.3), FVector2D(V * Size.X, Size.Y * 0.4), CraftStyle::SRGB(250, 247, 240, 230));
 	}
 	DrawBox(OutDrawElements, LayerId + 3, AllottedGeometry, FVector2D(V * Size.X - 2.0, -3.0), FVector2D(4.0, Size.Y + 6.0), FLinearColor::White);
 	DrawOutline(OutDrawElements, LayerId + 3, AllottedGeometry, FVector2D::ZeroVector, Size, FLinearColor(0.0f, 0.0f, 0.0f, 0.8f), 2.0f);

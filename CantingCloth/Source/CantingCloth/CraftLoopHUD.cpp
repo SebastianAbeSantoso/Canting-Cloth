@@ -29,12 +29,7 @@ namespace CraftHUD
 	constexpr int32 BodySize = 16;
 	constexpr int32 DetailSize = 14;
 
-	const FLinearColor ButtonFace(0.97f, 0.90f, 0.75f);
-	const FLinearColor ButtonText(0.07f, 0.05f, 0.03f);
-	const FLinearColor ButtonDetail(0.22f, 0.17f, 0.11f);
-	const FLinearColor DisabledFace(0.30f, 0.28f, 0.26f);
-	const FLinearColor DisabledText(0.70f, 0.68f, 0.64f);
-	const FLinearColor Shadow(0.0f, 0.0f, 0.0f, 0.85f);
+	const FLinearColor Shadow(0.0f, 0.0f, 0.0f, 0.9f);
 
 	TSharedRef<SWidget> Title(const FText& Text)
 	{
@@ -65,30 +60,31 @@ namespace CraftHUD
 			];
 	}
 
-	/** A cream button with dark text (about 15:1 contrast); grey when disabled. Optional press/release events for hold actions. */
+	/** A solid cream button with near-black text (~17:1); dark grey with light text when disabled.
+	 *  Optional press/release events for hold actions. */
 	TSharedRef<SButton> MakeButton(const FText& Label, const FText& Detail, TAttribute<bool> Enabled,
 		FSimpleDelegate OnPressed = FSimpleDelegate(), FSimpleDelegate OnReleased = FSimpleDelegate())
 	{
 		TSharedRef<SVerticalBox> Content = SNew(SVerticalBox)
 			+ SVerticalBox::Slot().AutoHeight()
 			[
-				SNew(STextBlock).Text(Label).Font(Font(BodySize, true))
-				.ColorAndOpacity_Lambda([Enabled]() { return FSlateColor(Enabled.Get() ? ButtonText : DisabledText); })
+				SNew(STextBlock).Text(Label).Font(Font(BodySize + 1, true))
+				.ColorAndOpacity_Lambda([Enabled]() { return FSlateColor(Enabled.Get() ? CraftStyle::ButtonText : CraftStyle::DisabledText); })
 			];
 		if (!Detail.IsEmpty())
 		{
-			Content->AddSlot().AutoHeight().Padding(0.0f, 3.0f, 0.0f, 0.0f)
+			Content->AddSlot().AutoHeight().Padding(0.0f, 4.0f, 0.0f, 0.0f)
 			[
 				SNew(STextBlock).Text(Detail).Font(Font(DetailSize)).AutoWrapText(true)
-				.ColorAndOpacity_Lambda([Enabled]() { return FSlateColor(Enabled.Get() ? ButtonDetail : DisabledText); })
+				.ColorAndOpacity_Lambda([Enabled]() { return FSlateColor(Enabled.Get() ? CraftStyle::ButtonDetail : CraftStyle::DisabledText); })
 			];
 		}
 		return SNew(SButton)
+			.ButtonStyle(&CraftStyle::ButtonStyle())
 			.IsEnabled(Enabled)
 			.OnPressed(OnPressed)
 			.OnReleased(OnReleased)
-			.ButtonColorAndOpacity_Lambda([Enabled]() { return FLinearColor(Enabled.Get() ? ButtonFace : DisabledFace); })
-			.ContentPadding(FMargin(14.0f, 9.0f))
+			.ContentPadding(FMargin(16.0f, 11.0f))
 			[
 				Content
 			];
@@ -181,7 +177,7 @@ using namespace CraftHUD;
 
 SCraftLoopHUD::SCraftLoopHUD()
 	: PanelBrush(CraftStyle::Panel)
-	, NoticeBrush(FLinearColor(0.20f, 0.13f, 0.05f, 0.96f))
+	, NoticeBrush(CraftStyle::SRGB(58, 40, 14, 248))
 {
 }
 
@@ -238,7 +234,7 @@ void SCraftLoopHUD::Construct(const FArguments& InArgs)
 					SNew(STextBlock)
 					.Text_Lambda([this]() { return NoticeText; })
 					.Font(Font(18, true))
-					.ColorAndOpacity(FLinearColor(1.0f, 0.88f, 0.62f))
+					.ColorAndOpacity(CraftStyle::SRGB(255, 236, 196))
 					.AutoWrapText(true)
 				]
 			]
@@ -549,9 +545,9 @@ TSharedRef<SWidget> SCraftLoopHUD::BuildDye()
 
 	// Phases 1-2: hold to dip.
 	TArray<FCraftGaugeZone> Zones;
-	Zones.Add({ 0.0f, Settings->DipGoodMin, FLinearColor(0.32f, 0.30f, 0.26f) });
-	Zones.Add({ Settings->DipGoodMin, Settings->DipGoodMax, FLinearColor(0.22f, 0.55f, 0.24f) });
-	Zones.Add({ Settings->DipGoodMax, 1.0f, FLinearColor(0.62f, 0.20f, 0.16f) });
+	Zones.Add({ 0.0f, Settings->DipGoodMin, CraftStyle::SRGB(96, 90, 80) });
+	Zones.Add({ Settings->DipGoodMin, Settings->DipGoodMax, CraftStyle::SRGB(52, 150, 64) });
+	Zones.Add({ Settings->DipGoodMax, 1.0f, CraftStyle::SRGB(176, 56, 44) });
 
 	TSharedRef<SButton> DipButton = MakeButton(LOCTEXT("Dip", "Hold to dip the cloth"), LOCTEXT("DipDetail", "Release to lift it out."), true,
 		FSimpleDelegate::CreateLambda([Weak]() { if (Weak.IsValid()) { Weak->StartDip(); } }),
@@ -604,8 +600,8 @@ TSharedRef<SWidget> SCraftLoopHUD::BuildStitch()
 
 	const float Tolerance = Settings->StitchTolerance;
 	TArray<FCraftGaugeZone> Zones;
-	Zones.Add({ 0.5f - Tolerance, 0.5f + Tolerance, FLinearColor(0.40f, 0.36f, 0.20f) });
-	Zones.Add({ 0.5f - Tolerance * 0.4f, 0.5f + Tolerance * 0.4f, FLinearColor(0.22f, 0.55f, 0.24f) });
+	Zones.Add({ 0.5f - Tolerance, 0.5f + Tolerance, CraftStyle::SRGB(130, 116, 60) });
+	Zones.Add({ 0.5f - Tolerance * 0.4f, 0.5f + Tolerance * 0.4f, CraftStyle::SRGB(52, 150, 64) });
 
 	TSharedRef<SButton> StitchButton = MakeButton(LOCTEXT("StitchNow", "Stitch!"), LOCTEXT("StitchNowDetail", "Press when the needle is in the green."), true);
 	StitchButton->SetOnClicked(FOnClicked::CreateLambda([Weak]() { if (Weak.IsValid()) { Weak->PressStitch(); } return FReply::Handled(); }));

@@ -7,10 +7,14 @@
 #include "Widgets/SLeafWidget.h"
 
 class UCraftLoopSubsystem;
+struct FButtonStyle;
 
-/** Shared palette so every craft widget reads the same. */
+/** Shared palette so every craft widget reads the same. Colours are authored in sRGB. */
 namespace CraftStyle
 {
+	/** Colour from on-screen (sRGB) 0-255 values. */
+	FLinearColor SRGB(uint8 R, uint8 G, uint8 B, uint8 A = 255);
+
 	extern const FLinearColor TextColor;
 	extern const FLinearColor Muted;
 	extern const FLinearColor Accent;
@@ -19,9 +23,16 @@ namespace CraftStyle
 	extern const FLinearColor Panel;
 	extern const FLinearColor Cloth;
 	extern const FLinearColor ClothLine;
+	extern const FLinearColor ButtonText;
+	extern const FLinearColor ButtonDetail;
+	extern const FLinearColor DisabledText;
 
 	FSlateFontInfo Font(int32 Size, bool bBold = false);
+	/** Bold font with a dark outline, for labels drawn over coloured shapes. */
+	FSlateFontInfo OutlinedFont(int32 Size);
 	const FSlateBrush* WhiteBrush();
+	/** Solid cream button, near-black text; dark grey when disabled. */
+	const FButtonStyle& ButtonStyle();
 }
 
 /**
