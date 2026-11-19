@@ -37,14 +37,6 @@ enum class ECraftEffectFamily : uint8
 };
 
 UENUM(BlueprintType)
-enum class ECraftCutStyle : uint8
-{
-	Short,
-	Standard,
-	Long
-};
-
-UENUM(BlueprintType)
 enum class ECraftExpeditionOutcome : uint8
 {
 	Success,
@@ -85,6 +77,48 @@ struct FCraftFabric
 	/** Wax coverage (0-1 of the panel) the cloth can hold before the inscription becomes unstable. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Craft", meta = (ClampMin = "0.01", ClampMax = "1.0"))
 	float MagicCapacity = 0.12f;
+
+	/** Size of the bolt in layout cells (Arrange stage). The grain runs along the height. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Craft", meta = (ClampMin = "2"))
+	int32 SheetWidth = 10;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Craft", meta = (ClampMin = "2"))
+	int32 SheetHeight = 14;
+};
+
+/** One pattern piece of a blueprint, in layout cells, unrotated (its height runs along the grain). */
+USTRUCT(BlueprintType)
+struct FCraftPatternPiece
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Craft")
+	FText Name;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Craft", meta = (ClampMin = "1"))
+	int32 Width = 4;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Craft", meta = (ClampMin = "1"))
+	int32 Height = 6;
+};
+
+/** Where a pattern piece sits on the fabric sheet. Rotated pieces run across the grain. */
+USTRUCT(BlueprintType)
+struct FCraftPiecePlacement
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Craft")
+	bool bPlaced = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Craft")
+	int32 X = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Craft")
+	int32 Y = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Craft")
+	bool bRotated = false;
 };
 
 USTRUCT(BlueprintType)
@@ -110,6 +144,14 @@ struct FCraftGarmentBlueprint
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Craft", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float BaseCoverage = 0.7f;
+
+	/** Pieces laid out on the fabric in the Arrange stage. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Craft")
+	TArray<FCraftPatternPiece> Pieces;
+
+	/** Seams joined in the Stitch stage. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Craft", meta = (ClampMin = "1"))
+	int32 SeamCount = 3;
 };
 
 USTRUCT(BlueprintType)
@@ -203,14 +245,28 @@ struct FCraftGarment
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Craft")
 	FName FabricId;
 
+	/** Share of the pattern area laid across the grain: drapes and covers better, but weaker. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Craft")
-	bool bOnBias = false;
+	float CrossGrainFraction = 0.0f;
 
+	/** Share of the fabric sheet left unused by the layout. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Craft")
-	ECraftCutStyle CutStyle = ECraftCutStyle::Standard;
+	float LayoutWaste = 0.0f;
+
+	/** Hem length relative to the blueprint (0.8 short ... 1.2 long). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Craft")
+	float CutLength = 1.0f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Craft")
 	bool bIndigoDye = false;
+
+	/** 0-1: how well the dip was timed. Pale dye barely sets the resist; too long and the wax cracks. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Craft")
+	float DyeQuality = 0.5f;
+
+	/** 0-1: average accuracy of the stitches. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Craft")
+	float SeamQuality = 1.0f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Craft")
 	FCraftInscription Inscription;

@@ -46,8 +46,12 @@ private:
 	FText GetHeaderText() const;
 	EVisibility GetNoticeVisibility() const;
 
+	/** Identifies what the panel currently shows; interactive panels are only rebuilt when it changes. */
+	int32 PanelKey() const;
+
 	TWeakObjectPtr<UCraftLoopSubsystem> Loop;
 	TSharedPtr<SBox> PanelBox;
+	int32 BuiltPanelKey = INDEX_NONE;
 	FText NoticeText;
 	double NoticeShownAt = -1000.0;
 

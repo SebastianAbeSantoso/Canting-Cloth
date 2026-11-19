@@ -83,6 +83,12 @@ void UCraftLoopSubsystem::Deinitialize()
 void UCraftLoopSubsystem::BeginCommission()
 {
 	Garment = FCraftGarment();
+	Placements.Reset();
+	bDyeChosen = false;
+	bDipping = false;
+	FinalDipDepth = 0.0f;
+	bStitching = false;
+	StitchScores.Reset();
 	Expedition = FCraftExpeditionResult();
 	RevealedEvents = 0;
 	bRewardsCollected = false;
@@ -188,25 +194,88 @@ bool UCraftLoopSubsystem::ChooseFabric(FName FabricId)
 		return false;
 	}
 	Garment.FabricId = FabricId;
+	FCraftGarmentBlueprint Blueprint;
+	GetChosenBlueprint(Blueprint);
+	Placements.Init(FCraftPiecePlacement(), Blueprint.Pieces.Num());
 	AdvanceStage();
 	return true;
 }
 
-void UCraftLoopSubsystem::CommitArrangement(bool bOnBias)
+bool UCraftLoopSubsystem::PlacePiece(int32 PieceIndex, int32 X, int32 Y, bool bRotated)
 {
-	if (RequireStage(ECraftStage::Arrange, TEXT("CommitArrangement")))
+	FCraftGarmentBlueprint Blueprint;
+	FCraftFabric Fabric;
+	if (!RequireStage(ECraftStage::Arrange, TEXT("PlacePiece")) || !GetChosenBlueprint(Blueprint) || !GetChosenFabric(Fabric)
+		|| !Placements.IsValidIndex(PieceIndex))
 	{
-		Garment.bOnBias = bOnBias;
-		SpendTime(UCraftSettings::Get()->CostArrange, LOCTEXT("TimeArrange", "Laid out the pattern"));
-		AdvanceStage();
+		return false;
+	}
+	FCraftPiecePlacement Candidate;
+	Candidate.bPlaced = true;
+	Candidate.X = X;
+	Candidate.Y = Y;
+	Candidate.bRotated = bRotated;
+	if (!UCraftRules::IsPlacementValid(Fabric, Blueprint, Placements, PieceIndex, Candidate))
+	{
+		return false;
+	}
+	Placements[PieceIndex] = Candidate;
+	Broadcast();
+	return true;
+}
+
+void UCraftLoopSubsystem::RemovePiece(int32 PieceIndex)
+{
+	if (RequireStage(ECraftStage::Arrange, TEXT("RemovePiece")) && Placements.IsValidIndex(PieceIndex))
+	{
+		Placements[PieceIndex].bPlaced = false;
+		Broadcast();
 	}
 }
 
-void UCraftLoopSubsystem::CommitCut(ECraftCutStyle Cut)
+bool UCraftLoopSubsystem::CanCommitArrangement() const
+{
+	if (Stage != ECraftStage::Arrange || Placements.Num() == 0)
+	{
+		return false;
+	}
+	for (const FCraftPiecePlacement& Placement : Placements)
+	{
+		if (!Placement.bPlaced)
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+bool UCraftLoopSubsystem::CommitArrangement()
+{
+	FCraftGarmentBlueprint Blueprint;
+	FCraftFabric Fabric;
+	if (!RequireStage(ECraftStage::Arrange, TEXT("CommitArrangement")) || !CanCommitArrangement()
+		|| !GetChosenBlueprint(Blueprint) || !GetChosenFabric(Fabric))
+	{
+		return false;
+	}
+	UCraftRules::EvaluateLayout(Fabric, Blueprint, Placements, Garment.CrossGrainFraction, Garment.LayoutWaste);
+	SpendTime(UCraftSettings::Get()->CostArrange, LOCTEXT("TimeArrange", "Laid out the pattern"));
+	AdvanceStage();
+	return true;
+}
+
+void UCraftLoopSubsystem::SetCutLength(float CutLength)
+{
+	if (Stage == ECraftStage::Cut && !bBusy)
+	{
+		Garment.CutLength = FMath::Clamp(CutLength, UCraftRules::MinCutLength, UCraftRules::MaxCutLength);
+	}
+}
+
+void UCraftLoopSubsystem::CommitCut()
 {
 	if (RequireStage(ECraftStage::Cut, TEXT("CommitCut")))
 	{
-		Garment.CutStyle = Cut;
 		SpendTime(UCraftSettings::Get()->CostCut, LOCTEXT("TimeCut", "Cut the panels"));
 		AdvanceStage();
 	}
@@ -266,34 +335,89 @@ bool UCraftLoopSubsystem::UndoCantingStroke()
 	return bUndone;
 }
 
-bool UCraftLoopSubsystem::ApplyDye(bool bIndigo)
+bool UCraftLoopSubsystem::ChooseDye(bool bIndigo)
 {
-	if (!RequireStage(ECraftStage::Dye, TEXT("ApplyDye")) || (bIndigo && !bIndigoDelivered))
+	if (!RequireStage(ECraftStage::Dye, TEXT("ChooseDye")) || bDipping || (bIndigo && !bIndigoDelivered))
 	{
 		return false;
 	}
-	const UCraftSettings* Settings = UCraftSettings::Get();
 	Garment.bIndigoDye = bIndigo;
+	bDyeChosen = true;
+	const UCraftSettings* Settings = UCraftSettings::Get();
+	if (UMaterialInstanceDynamic* Material = GetClothMaterial())
+	{
+		Material->SetVectorParameterValue(Settings->DyeColorParameterName, bIndigo ? Settings->IndigoColor : Settings->SogaColor);
+	}
+	Broadcast();
+	return true;
+}
+
+void UCraftLoopSubsystem::StartDip()
+{
+	if (RequireStage(ECraftStage::Dye, TEXT("StartDip")) && bDyeChosen && !bDipping)
+	{
+		bDipping = true;
+		DipStartTime = Now();
+		Broadcast();
+	}
+}
+
+void UCraftLoopSubsystem::StopDip()
+{
+	if (Stage == ECraftStage::Dye && bDipping)
+	{
+		FinishDip(GetDipDepth());
+	}
+}
+
+float UCraftLoopSubsystem::GetDipDepth() const
+{
+	if (!bDipping)
+	{
+		return FinalDipDepth;
+	}
+	return FMath::Clamp(static_cast<float>((Now() - DipStartTime) * UCraftSettings::Get()->DipRate), 0.0f, 1.0f);
+}
+
+void UCraftLoopSubsystem::FinishDip(float Depth)
+{
+	const UCraftSettings* Settings = UCraftSettings::Get();
+	bDipping = false;
+	FinalDipDepth = FMath::Clamp(Depth, 0.0f, 1.0f);
+	Garment.DyeQuality = UCraftRules::DyeQualityFromDepth(FinalDipDepth, Settings->DipGoodMin, Settings->DipGoodMax);
+	const bool bIndigo = Garment.bIndigoDye;
+	UE_LOG(LogCraftLoop, Log, TEXT("Dip depth %.2f -> dye quality %.2f"), FinalDipDepth, Garment.DyeQuality);
 
 	// Re-read the inscription with the dye's effect on the resist.
 	const FCraftFabric* Fabric = Settings->FindFabric(Garment.FabricId);
 	const FCraftInscription Measured = Garment.Inscription;
 	Garment.Inscription = UCraftRules::InterpretInscription(Measured.StrokeCount, Measured.WaxCoverage, Measured.EnclosedShapes,
-		Fabric ? *Fabric : FCraftFabric(), bIndigo, KnownMotifs.Num());
+		Fabric ? *Fabric : FCraftFabric(), bIndigo, KnownMotifs.Num(), Garment.DyeQuality);
 
-	UMaterialInstanceDynamic* Material = GetClothMaterial();
-	if (Material)
+	if (Garment.DyeQuality >= 0.99f)
 	{
-		Material->SetVectorParameterValue(Settings->DyeColorParameterName, bIndigo ? Settings->IndigoColor : Settings->SogaColor);
+		Notify(LOCTEXT("DipPerfect", "A deep, even colour. The resist held perfectly."));
 	}
+	else if (FinalDipDepth < Settings->DipGoodMin)
+	{
+		Notify(LOCTEXT("DipPale", "Lifted too soon: the colour is pale and the resist barely set."));
+	}
+	else
+	{
+		Notify(LOCTEXT("DipCracked", "Left in too long: the wax softened and fine cracks let the dye vein through."));
+	}
+
+	// Reveal: the colour comes up only as deep as the dip went.
+	UMaterialInstanceDynamic* Material = GetClothMaterial();
 	const FName DyedParameter = Settings->DyedParameterName;
+	const float TargetDyed = FMath::Max(FinalDipDepth, 0.2f);
 	TWeakObjectPtr<UMaterialInstanceDynamic> WeakMaterial(Material);
 	PlayAnimation(DyeSeconds,
-		[WeakMaterial, DyedParameter](float Alpha)
+		[WeakMaterial, DyedParameter, TargetDyed](float Alpha)
 		{
 			if (WeakMaterial.IsValid())
 			{
-				WeakMaterial->SetScalarParameterValue(DyedParameter, Alpha);
+				WeakMaterial->SetScalarParameterValue(DyedParameter, Alpha * TargetDyed);
 			}
 		},
 		[this, bIndigo]()
@@ -302,15 +426,64 @@ bool UCraftLoopSubsystem::ApplyDye(bool bIndigo)
 				bIndigo ? LOCTEXT("TimeDyeIndigo", "Dyed in indigo, wax boiled off") : LOCTEXT("TimeDyeSoga", "Dyed in soga, wax boiled off"));
 			AdvanceStage();
 		});
-	return true;
 }
 
-void UCraftLoopSubsystem::Stitch()
+void UCraftLoopSubsystem::StartStitching()
 {
-	if (!RequireStage(ECraftStage::Stitch, TEXT("Stitch")))
+	if (RequireStage(ECraftStage::Stitch, TEXT("StartStitching")) && !bStitching)
 	{
+		bStitching = true;
+		StitchStartTime = Now();
+		StitchScores.Reset();
+		Broadcast();
+	}
+}
+
+int32 UCraftLoopSubsystem::GetStitchesTotal() const
+{
+	FCraftGarmentBlueprint Blueprint;
+	const int32 Seams = GetChosenBlueprint(Blueprint) ? Blueprint.SeamCount : 1;
+	return FMath::Max(1, Seams * UCraftSettings::Get()->StitchesPerSeam);
+}
+
+float UCraftLoopSubsystem::GetStitchMarker() const
+{
+	if (!bStitching)
+	{
+		return 0.0f;
+	}
+	// Triangle wave: the needle sweeps 0 -> 1 -> 0.
+	const double Cycles = (Now() - StitchStartTime) * UCraftSettings::Get()->StitchMarkerSpeed;
+	const float Phase = static_cast<float>(Cycles - FMath::FloorToDouble(Cycles));
+	return 1.0f - FMath::Abs(2.0f * Phase - 1.0f);
+}
+
+void UCraftLoopSubsystem::PressStitch()
+{
+	if (Stage == ECraftStage::Stitch && bStitching && !bBusy)
+	{
+		StitchAt(GetStitchMarker());
+	}
+}
+
+void UCraftLoopSubsystem::StitchAt(float MarkerPosition)
+{
+	StitchScores.Add(UCraftRules::StitchAccuracy(MarkerPosition, UCraftSettings::Get()->StitchTolerance));
+	if (StitchScores.Num() < GetStitchesTotal())
+	{
+		Broadcast();
 		return;
 	}
+
+	bStitching = false;
+	float Sum = 0.0f;
+	for (const float Score : StitchScores)
+	{
+		Sum += Score;
+	}
+	Garment.SeamQuality = Sum / StitchScores.Num();
+	UE_LOG(LogCraftLoop, Log, TEXT("Seam quality %.2f over %d stitches"), Garment.SeamQuality, StitchScores.Num());
+
 	const UCraftSettings* Settings = UCraftSettings::Get();
 	FCraftCommission Commission;
 	const FCraftGarmentBlueprint* Blueprint = Settings->FindBlueprint(Garment.BlueprintId);
@@ -481,11 +654,43 @@ void UCraftLoopSubsystem::AutoStep()
 		ChooseBlueprint(Commission.AllowedBlueprints.Num() > 0 ? Commission.AllowedBlueprints[0] : UCraftSettings::Get()->Blueprints[0].Id);
 		break;
 	case ECraftStage::SelectCloth: ChooseFabric(UCraftSettings::Get()->Fabrics[0].Id); break;
-	case ECraftStage::Arrange: CommitArrangement(false); break;
-	case ECraftStage::Cut: CommitCut(ECraftCutStyle::Standard); break;
+	case ECraftStage::Arrange:
+	{
+		FCraftGarmentBlueprint Blueprint;
+		FCraftFabric Fabric;
+		if (GetChosenBlueprint(Blueprint) && GetChosenFabric(Fabric) && UCraftRules::AutoArrange(Fabric, Blueprint, Placements))
+		{
+			CommitArrangement();
+		}
+		else
+		{
+			UE_LOG(LogCraftLoop, Error, TEXT("AutoStep: the pattern pieces don't fit on this fabric."));
+		}
+		break;
+	}
+	case ECraftStage::Cut: CommitCut(); break;
 	case ECraftStage::Canting: FinishCanting(); break;
-	case ECraftStage::Dye: ApplyDye(bIndigoDelivered); break;
-	case ECraftStage::Stitch: Stitch(); break;
+	case ECraftStage::Dye:
+		if (!bDyeChosen)
+		{
+			ChooseDye(bIndigoDelivered);
+		}
+		else
+		{
+			const UCraftSettings* Settings = UCraftSettings::Get();
+			FinishDip(0.5f * (Settings->DipGoodMin + Settings->DipGoodMax));
+		}
+		break;
+	case ECraftStage::Stitch:
+		if (!bStitching)
+		{
+			StartStitching();
+		}
+		else
+		{
+			StitchAt(0.5f);
+		}
+		break;
 	case ECraftStage::Inspect: ConfirmInspection(); break;
 	case ECraftStage::Deliver: DeliverGarment(); break;
 	case ECraftStage::Expedition: FinishExpedition(); break;
@@ -547,6 +752,42 @@ bool UCraftLoopSubsystem::GetCurrentCommission(FCraftCommission& OutCommission) 
 bool UCraftLoopSubsystem::HasLiveCanvas() const
 {
 	return GetCanvas() != nullptr;
+}
+
+int32 UCraftLoopSubsystem::GetStagePhase() const
+{
+	switch (Stage)
+	{
+	case ECraftStage::Dye: return bBusy ? 3 : (bDipping ? 2 : (bDyeChosen ? 1 : 0));
+	case ECraftStage::Stitch: return bBusy ? 2 : (bStitching ? 1 : 0);
+	default: return bBusy ? 1 : 0;
+	}
+}
+
+bool UCraftLoopSubsystem::GetChosenBlueprint(FCraftGarmentBlueprint& OutBlueprint) const
+{
+	const FCraftGarmentBlueprint* Found = UCraftSettings::Get()->FindBlueprint(Garment.BlueprintId);
+	if (Found)
+	{
+		OutBlueprint = *Found;
+	}
+	return Found != nullptr;
+}
+
+bool UCraftLoopSubsystem::GetChosenFabric(FCraftFabric& OutFabric) const
+{
+	const FCraftFabric* Found = UCraftSettings::Get()->FindFabric(Garment.FabricId);
+	if (Found)
+	{
+		OutFabric = *Found;
+	}
+	return Found != nullptr;
+}
+
+double UCraftLoopSubsystem::Now() const
+{
+	const UWorld* World = GetWorld();
+	return World ? World->GetRealTimeSeconds() : FPlatformTime::Seconds();
 }
 
 bool UCraftLoopSubsystem::GetLiveInscription(FCraftInscription& OutInscription) const

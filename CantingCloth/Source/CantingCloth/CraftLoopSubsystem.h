@@ -53,12 +53,24 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Craft|Actions")
 	bool ChooseFabric(FName FabricId);
 
-	/** Lay the pattern along the grain (sturdier) or on the bias (drapes and covers better). */
+	/** Arrange: puts a pattern piece on the sheet. Fails (and changes nothing) if it doesn't fit or overlaps. */
 	UFUNCTION(BlueprintCallable, Category = "Craft|Actions")
-	void CommitArrangement(bool bOnBias);
+	bool PlacePiece(int32 PieceIndex, int32 X, int32 Y, bool bRotated);
+
+	/** Arrange: takes a piece back off the sheet. */
+	UFUNCTION(BlueprintCallable, Category = "Craft|Actions")
+	void RemovePiece(int32 PieceIndex);
+
+	/** Arrange: confirms the layout once every piece is on the sheet. */
+	UFUNCTION(BlueprintCallable, Category = "Craft|Actions")
+	bool CommitArrangement();
+
+	/** Cut: moves the hem (0.8 short ... 1.2 long). Free until committed. */
+	UFUNCTION(BlueprintCallable, Category = "Craft|Actions")
+	void SetCutLength(float CutLength);
 
 	UFUNCTION(BlueprintCallable, Category = "Craft|Actions")
-	void CommitCut(ECraftCutStyle Cut);
+	void CommitCut();
 
 	/** Measures the wax on the cloth, interprets it, and moves on to dyeing. */
 	UFUNCTION(BlueprintCallable, Category = "Craft|Actions")
@@ -70,12 +82,25 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Craft|Actions")
 	bool UndoCantingStroke();
 
-	/** Indigo only works once the neighbour has delivered it. */
+	/** Dye: picks the vat. Indigo only works once the neighbour has delivered it. */
 	UFUNCTION(BlueprintCallable, Category = "Craft|Actions")
-	bool ApplyDye(bool bIndigo);
+	bool ChooseDye(bool bIndigo);
 
+	/** Dye: lowers the cloth into the vat (hold). */
 	UFUNCTION(BlueprintCallable, Category = "Craft|Actions")
-	void Stitch();
+	void StartDip();
+
+	/** Dye: lifts the cloth out (release). The depth reached decides the dye quality, then the wax is boiled off. */
+	UFUNCTION(BlueprintCallable, Category = "Craft|Actions")
+	void StopDip();
+
+	/** Stitch: threads the needle and starts the first seam. */
+	UFUNCTION(BlueprintCallable, Category = "Craft|Actions")
+	void StartStitching();
+
+	/** Stitch: one stitch at the needle's current position. Best when the marker is in the middle. */
+	UFUNCTION(BlueprintCallable, Category = "Craft|Actions")
+	void PressStitch();
 
 	UFUNCTION(BlueprintCallable, Category = "Craft|Actions")
 	void ConfirmInspection();
@@ -155,6 +180,42 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Craft|State")
 	bool HasLiveCanvas() const;
 
+	/** Sub-step inside interactive stages: Dye 0 = choose vat, 1 = ready to dip, 2 = dipping, 3 = revealing;
+	 *  Stitch 0 = ready, 1 = stitching, 2 = assembling. 0 elsewhere. */
+	UFUNCTION(BlueprintPure, Category = "Craft|State")
+	int32 GetStagePhase() const;
+
+	UFUNCTION(BlueprintPure, Category = "Craft|State")
+	TArray<FCraftPiecePlacement> GetPlacements() const { return Placements; }
+
+	UFUNCTION(BlueprintPure, Category = "Craft|State")
+	bool CanCommitArrangement() const;
+
+	/** Blueprint and fabric chosen for the current garment (false if not chosen yet). */
+	bool GetChosenBlueprint(FCraftGarmentBlueprint& OutBlueprint) const;
+	bool GetChosenFabric(FCraftFabric& OutFabric) const;
+
+	UFUNCTION(BlueprintPure, Category = "Craft|State")
+	float GetCutLength() const { return Garment.CutLength; }
+
+	/** 0-1 dye depth; rises while dipping. */
+	UFUNCTION(BlueprintPure, Category = "Craft|State")
+	float GetDipDepth() const;
+
+	/** 0-1 position of the needle marker on the stitch bar. */
+	UFUNCTION(BlueprintPure, Category = "Craft|State")
+	float GetStitchMarker() const;
+
+	UFUNCTION(BlueprintPure, Category = "Craft|State")
+	int32 GetStitchesDone() const { return StitchScores.Num(); }
+
+	UFUNCTION(BlueprintPure, Category = "Craft|State")
+	int32 GetStitchesTotal() const;
+
+	/** Accuracy of the most recent stitch, or -1 before the first. */
+	UFUNCTION(BlueprintPure, Category = "Craft|State")
+	float GetLastStitchAccuracy() const { return StitchScores.Num() > 0 ? StitchScores.Last() : -1.0f; }
+
 protected:
 	virtual bool ShouldCreateSubsystem(UObject* Outer) const override;
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
@@ -183,6 +244,9 @@ private:
 	void TickAnimation();
 
 	void RevealNextEvent();
+	void FinishDip(float Depth);
+	void StitchAt(float MarkerPosition);
+	double Now() const;
 
 	void ShowHUD();
 	void HideHUD();
@@ -197,6 +261,14 @@ private:
 	bool bRewardsCollected = false;
 
 	FCraftGarment Garment;
+	TArray<FCraftPiecePlacement> Placements;
+	bool bDyeChosen = false;
+	bool bDipping = false;
+	double DipStartTime = 0.0;
+	float FinalDipDepth = 0.0f;
+	bool bStitching = false;
+	double StitchStartTime = 0.0;
+	TArray<float> StitchScores;
 	FCraftExpeditionResult Expedition;
 	int32 RevealedEvents = 0;
 

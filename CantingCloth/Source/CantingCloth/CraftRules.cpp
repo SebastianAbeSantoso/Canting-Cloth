@@ -25,7 +25,7 @@ namespace
 }
 
 FCraftInscription UCraftRules::InterpretInscription(int32 StrokeCount, float WaxCoverage, int32 EnclosedShapes,
-	const FCraftFabric& Fabric, bool bIndigoDye, int32 KnownMotifCount)
+	const FCraftFabric& Fabric, bool bIndigoDye, int32 KnownMotifCount, float DyeQuality)
 {
 	const UCraftSettings* Settings = UCraftSettings::Get();
 
@@ -47,41 +47,146 @@ FCraftInscription UCraftRules::InterpretInscription(int32 StrokeCount, float Wax
 	{
 		Stability += Settings->IndigoStabilityBonus;
 	}
+	// A well-timed dip sets the resist; a pale or cracked one weakens it. 0.5 = neutral (not dyed yet).
+	Stability += (FMath::Clamp(DyeQuality, 0.0f, 1.0f) - 0.5f) * 2.0f * Settings->DipStabilityRange;
 	// An empty cloth has nothing to stabilise.
 	Result.Stability = Result.WaxCoverage > 0.0f ? FMath::Clamp(Stability, 0.0f, 1.0f) : 0.0f;
 	return Result;
 }
 
-float UCraftRules::CutCoverageMultiplier(ECraftCutStyle Cut)
+float UCraftRules::CutCoverageMultiplier(float CutLength)
 {
-	switch (Cut)
-	{
-	case ECraftCutStyle::Short: return 0.8f;
-	case ECraftCutStyle::Long: return 1.2f;
-	default: return 1.0f;
-	}
+	return FMath::Clamp(CutLength, MinCutLength, MaxCutLength);
 }
 
-float UCraftRules::CutWeightMultiplier(ECraftCutStyle Cut)
+float UCraftRules::CutWeightMultiplier(float CutLength)
 {
-	switch (Cut)
+	// Slightly steeper than coverage: a long hem gains less cover than it adds weight.
+	return FMath::Pow(FMath::Clamp(CutLength, MinCutLength, MaxCutLength), 1.2f);
+}
+
+FIntPoint UCraftRules::PieceFootprint(const FCraftPatternPiece& Piece, bool bRotated)
+{
+	return bRotated ? FIntPoint(Piece.Height, Piece.Width) : FIntPoint(Piece.Width, Piece.Height);
+}
+
+bool UCraftRules::IsPlacementValid(const FCraftFabric& Fabric, const FCraftGarmentBlueprint& Blueprint,
+	const TArray<FCraftPiecePlacement>& Placements, int32 PieceIndex, const FCraftPiecePlacement& Candidate)
+{
+	if (!Blueprint.Pieces.IsValidIndex(PieceIndex))
 	{
-	case ECraftCutStyle::Short: return 0.8f;
-	case ECraftCutStyle::Long: return 1.25f;
-	default: return 1.0f;
+		return false;
 	}
+	const FIntPoint Size = PieceFootprint(Blueprint.Pieces[PieceIndex], Candidate.bRotated);
+	if (Candidate.X < 0 || Candidate.Y < 0 || Candidate.X + Size.X > Fabric.SheetWidth || Candidate.Y + Size.Y > Fabric.SheetHeight)
+	{
+		return false;
+	}
+	for (int32 Other = 0; Other < Placements.Num() && Other < Blueprint.Pieces.Num(); ++Other)
+	{
+		const FCraftPiecePlacement& Placed = Placements[Other];
+		if (Other == PieceIndex || !Placed.bPlaced)
+		{
+			continue;
+		}
+		const FIntPoint OtherSize = PieceFootprint(Blueprint.Pieces[Other], Placed.bRotated);
+		const bool bOverlap = Candidate.X < Placed.X + OtherSize.X && Placed.X < Candidate.X + Size.X
+			&& Candidate.Y < Placed.Y + OtherSize.Y && Placed.Y < Candidate.Y + Size.Y;
+		if (bOverlap)
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+void UCraftRules::EvaluateLayout(const FCraftFabric& Fabric, const FCraftGarmentBlueprint& Blueprint,
+	const TArray<FCraftPiecePlacement>& Placements, float& OutCrossGrainFraction, float& OutWaste)
+{
+	int32 TotalArea = 0;
+	int32 CrossArea = 0;
+	for (int32 Index = 0; Index < Blueprint.Pieces.Num(); ++Index)
+	{
+		const int32 Area = Blueprint.Pieces[Index].Width * Blueprint.Pieces[Index].Height;
+		TotalArea += Area;
+		if (Placements.IsValidIndex(Index) && Placements[Index].bPlaced && Placements[Index].bRotated)
+		{
+			CrossArea += Area;
+		}
+	}
+	const int32 SheetArea = FMath::Max(Fabric.SheetWidth * Fabric.SheetHeight, 1);
+	OutCrossGrainFraction = TotalArea > 0 ? static_cast<float>(CrossArea) / TotalArea : 0.0f;
+	OutWaste = FMath::Clamp(1.0f - static_cast<float>(TotalArea) / SheetArea, 0.0f, 1.0f);
+}
+
+bool UCraftRules::AutoArrange(const FCraftFabric& Fabric, const FCraftGarmentBlueprint& Blueprint, TArray<FCraftPiecePlacement>& OutPlacements)
+{
+	OutPlacements.Init(FCraftPiecePlacement(), Blueprint.Pieces.Num());
+	bool bAllPlaced = true;
+	for (int32 Index = 0; Index < Blueprint.Pieces.Num(); ++Index)
+	{
+		bool bPlaced = false;
+		for (const bool bRotated : { false, true })
+		{
+			for (int32 Y = 0; Y < Fabric.SheetHeight && !bPlaced; ++Y)
+			{
+				for (int32 X = 0; X < Fabric.SheetWidth && !bPlaced; ++X)
+				{
+					FCraftPiecePlacement Candidate;
+					Candidate.bPlaced = true;
+					Candidate.X = X;
+					Candidate.Y = Y;
+					Candidate.bRotated = bRotated;
+					if (IsPlacementValid(Fabric, Blueprint, OutPlacements, Index, Candidate))
+					{
+						OutPlacements[Index] = Candidate;
+						bPlaced = true;
+					}
+				}
+			}
+			if (bPlaced)
+			{
+				break;
+			}
+		}
+		bAllPlaced &= bPlaced;
+	}
+	return bAllPlaced;
+}
+
+float UCraftRules::DyeQualityFromDepth(float Depth, float GoodMin, float GoodMax)
+{
+	if (Depth < GoodMin)
+	{
+		// Pale: the colour barely took.
+		return FMath::Lerp(0.0f, 1.0f, FMath::Clamp(Depth / FMath::Max(GoodMin, 0.01f), 0.0f, 1.0f)) * 0.8f;
+	}
+	if (Depth <= GoodMax)
+	{
+		return 1.0f;
+	}
+	// Too long: the wax softens and cracks (remekan), letting dye vein through the resist.
+	const float Over = (Depth - GoodMax) / FMath::Max(1.0f - GoodMax, 0.01f);
+	return FMath::Lerp(1.0f, 0.0f, FMath::Clamp(Over, 0.0f, 1.0f));
+}
+
+float UCraftRules::StitchAccuracy(float MarkerPosition, float Tolerance)
+{
+	return FMath::Clamp(1.0f - FMath::Abs(MarkerPosition - 0.5f) / FMath::Max(Tolerance, 0.01f), 0.0f, 1.0f);
 }
 
 FCraftGarment UCraftRules::BuildGarment(const FCraftGarment& Choices, const FCraftCommission& Commission,
 	const FCraftGarmentBlueprint& Blueprint, const FCraftFabric& Fabric)
 {
 	FCraftGarment Garment = Choices;
-	const float CutCoverage = CutCoverageMultiplier(Garment.CutStyle);
+	const float CutCoverage = CutCoverageMultiplier(Garment.CutLength);
 
-	Garment.Weight = Blueprint.BaseWeight * Fabric.Weight * CutWeightMultiplier(Garment.CutStyle);
-	// Cut on the bias: drapes and covers better, but the stretched weave is weaker.
-	Garment.Coverage = FMath::Clamp(Blueprint.BaseCoverage * CutCoverage * (Garment.bOnBias ? 1.05f : 1.0f), 0.0f, 1.0f);
-	Garment.Durability = Fabric.Durability * CutCoverage * (Garment.bOnBias ? 0.9f : 1.0f);
+	Garment.Weight = Blueprint.BaseWeight * Fabric.Weight * CutWeightMultiplier(Garment.CutLength);
+	// Pieces laid across the grain drape and cover better, but the weave is weaker that way.
+	Garment.Coverage = FMath::Clamp(Blueprint.BaseCoverage * CutCoverage * (1.0f + 0.05f * Garment.CrossGrainFraction), 0.0f, 1.0f);
+	// Seam quality: sloppy stitches (0) lose 15%, perfect ones (1) add 10%.
+	Garment.Durability = Fabric.Durability * CutCoverage * (1.0f - 0.1f * Garment.CrossGrainFraction)
+		* (0.85f + 0.25f * FMath::Clamp(Garment.SeamQuality, 0.0f, 1.0f));
 	// Slice rule: the commission names the effect family; the drawing decides how well it works (GDD open question 3).
 	Garment.Effect = Commission.RequiredEffect;
 	Garment.Protection = 100.0f * Garment.Inscription.Strength * Garment.Inscription.Stability * Garment.Coverage;

@@ -1,9 +1,9 @@
 #include "CraftLoopHUD.h"
 
 #include "CraftLoopSubsystem.h"
+#include "CraftLoopWidgets.h"
 #include "CraftRules.h"
 #include "CraftSettings.h"
-#include "Styling/CoreStyle.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
@@ -19,69 +19,90 @@
 
 namespace CraftHUD
 {
-	constexpr float PanelWidth = 430.0f;
+	using namespace CraftStyle;
+
+	constexpr float PanelWidth = 500.0f;
 	constexpr double NoticeSeconds = 7.0;
 
-	const FLinearColor TextColor(0.93f, 0.9f, 0.84f);
-	const FLinearColor MutedColor(0.68f, 0.65f, 0.6f);
-	const FLinearColor AccentColor(0.95f, 0.72f, 0.35f);
-	const FLinearColor WarningColor(0.95f, 0.45f, 0.35f);
+	// Sizes chosen for reading at a distance on a 1080p screen.
+	constexpr int32 TitleSize = 24;
+	constexpr int32 BodySize = 16;
+	constexpr int32 DetailSize = 14;
 
-	FSlateFontInfo Font(int32 Size, bool bBold = false)
-	{
-		return FCoreStyle::GetDefaultFontStyle(bBold ? TEXT("Bold") : TEXT("Regular"), Size);
-	}
+	const FLinearColor ButtonFace(0.97f, 0.90f, 0.75f);
+	const FLinearColor ButtonText(0.07f, 0.05f, 0.03f);
+	const FLinearColor ButtonDetail(0.22f, 0.17f, 0.11f);
+	const FLinearColor DisabledFace(0.30f, 0.28f, 0.26f);
+	const FLinearColor DisabledText(0.70f, 0.68f, 0.64f);
+	const FLinearColor Shadow(0.0f, 0.0f, 0.0f, 0.85f);
 
 	TSharedRef<SWidget> Title(const FText& Text)
 	{
-		return SNew(STextBlock).Text(Text).Font(Font(18, true)).ColorAndOpacity(AccentColor).AutoWrapText(true);
+		return SNew(STextBlock).Text(Text).Font(Font(TitleSize, true)).ColorAndOpacity(Accent).AutoWrapText(true)
+			.ShadowOffset(FVector2D(1.0, 1.0)).ShadowColorAndOpacity(Shadow);
 	}
 
-	TSharedRef<SWidget> Body(const FText& Text, const FLinearColor& Color = TextColor)
+	TSharedRef<SWidget> Body(const FText& Text, const FLinearColor& Color = CraftStyle::TextColor)
 	{
-		return SNew(STextBlock).Text(Text).Font(Font(12)).ColorAndOpacity(Color).AutoWrapText(true);
+		return SNew(STextBlock).Text(Text).Font(Font(BodySize)).ColorAndOpacity(Color).AutoWrapText(true).LineHeightPercentage(1.1f);
 	}
 
-	TSharedRef<SWidget> Stat(const FText& Label, const FText& Value, const FLinearColor& Color = TextColor)
+	TSharedRef<SWidget> LiveText(TAttribute<FText> Text, const FLinearColor& Color = CraftStyle::TextColor, int32 Size = BodySize, bool bBold = false)
+	{
+		return SNew(STextBlock).Text(Text).Font(Font(Size, bBold)).ColorAndOpacity(Color).AutoWrapText(true);
+	}
+
+	TSharedRef<SWidget> Stat(const FText& Label, const FText& Value, const FLinearColor& Color = CraftStyle::TextColor)
 	{
 		return SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot().FillWidth(1.0f)
 			[
-				SNew(STextBlock).Text(Label).Font(Font(12)).ColorAndOpacity(MutedColor)
+				SNew(STextBlock).Text(Label).Font(Font(BodySize)).ColorAndOpacity(Muted)
 			]
 			+ SHorizontalBox::Slot().AutoWidth()
 			[
-				SNew(STextBlock).Text(Value).Font(Font(12, true)).ColorAndOpacity(Color)
+				SNew(STextBlock).Text(Value).Font(Font(BodySize, true)).ColorAndOpacity(Color)
 			];
 	}
 
-	/** A choice button: a bold label and an optional line explaining the trade-off. */
-	TSharedRef<SWidget> Button(const FText& Label, const FText& Detail, TFunction<void()> OnClick, bool bEnabled = true)
+	/** A cream button with dark text (about 15:1 contrast); grey when disabled. Optional press/release events for hold actions. */
+	TSharedRef<SButton> MakeButton(const FText& Label, const FText& Detail, TAttribute<bool> Enabled,
+		FSimpleDelegate OnPressed = FSimpleDelegate(), FSimpleDelegate OnReleased = FSimpleDelegate())
 	{
 		TSharedRef<SVerticalBox> Content = SNew(SVerticalBox)
 			+ SVerticalBox::Slot().AutoHeight()
 			[
-				SNew(STextBlock).Text(Label).Font(Font(13, true)).ColorAndOpacity(FLinearColor(0.08f, 0.06f, 0.04f))
+				SNew(STextBlock).Text(Label).Font(Font(BodySize, true))
+				.ColorAndOpacity_Lambda([Enabled]() { return FSlateColor(Enabled.Get() ? ButtonText : DisabledText); })
 			];
 		if (!Detail.IsEmpty())
 		{
-			Content->AddSlot().AutoHeight().Padding(0.0f, 2.0f, 0.0f, 0.0f)
+			Content->AddSlot().AutoHeight().Padding(0.0f, 3.0f, 0.0f, 0.0f)
 			[
-				SNew(STextBlock).Text(Detail).Font(Font(11)).ColorAndOpacity(FLinearColor(0.2f, 0.17f, 0.13f)).AutoWrapText(true)
+				SNew(STextBlock).Text(Detail).Font(Font(DetailSize)).AutoWrapText(true)
+				.ColorAndOpacity_Lambda([Enabled]() { return FSlateColor(Enabled.Get() ? ButtonDetail : DisabledText); })
 			];
 		}
 		return SNew(SButton)
-			.IsEnabled(bEnabled)
-			.ButtonColorAndOpacity(FLinearColor(0.93f, 0.84f, 0.68f))
-			.ContentPadding(FMargin(10.0f, 6.0f))
-			.OnClicked_Lambda([OnClick]()
-			{
-				OnClick();
-				return FReply::Handled();
-			})
+			.IsEnabled(Enabled)
+			.OnPressed(OnPressed)
+			.OnReleased(OnReleased)
+			.ButtonColorAndOpacity_Lambda([Enabled]() { return FLinearColor(Enabled.Get() ? ButtonFace : DisabledFace); })
+			.ContentPadding(FMargin(14.0f, 9.0f))
 			[
 				Content
 			];
+	}
+
+	TSharedRef<SWidget> Button(const FText& Label, const FText& Detail, TFunction<void()> OnClick, TAttribute<bool> Enabled = true)
+	{
+		TSharedRef<SButton> Result = MakeButton(Label, Detail, Enabled);
+		Result->SetOnClicked(FOnClicked::CreateLambda([OnClick]()
+		{
+			OnClick();
+			return FReply::Handled();
+		}));
+		return Result;
 	}
 
 	FText EffectName(ECraftEffectFamily Effect)
@@ -90,16 +111,6 @@ namespace CraftHUD
 		{
 		case ECraftEffectFamily::WardPhysical: return LOCTEXT("WardPhysical", "Ward against blows");
 		default: return LOCTEXT("WardPoison", "Ward against miasma");
-		}
-	}
-
-	FText CutName(ECraftCutStyle Cut)
-	{
-		switch (Cut)
-		{
-		case ECraftCutStyle::Short: return LOCTEXT("CutShort", "Short");
-		case ECraftCutStyle::Long: return LOCTEXT("CutLong", "Long");
-		default: return LOCTEXT("CutStandard", "Standard");
 		}
 	}
 
@@ -137,28 +148,40 @@ namespace CraftHUD
 		return FText::AsNumber(Value, &Options);
 	}
 
-	/** Stacks widgets vertically with even spacing. */
+	FText QualityWord(float Quality)
+	{
+		if (Quality >= 0.85f) return LOCTEXT("QualityFine", "fine");
+		if (Quality >= 0.55f) return LOCTEXT("QualityDecent", "decent");
+		if (Quality >= 0.25f) return LOCTEXT("QualityRough", "rough");
+		return LOCTEXT("QualityPoor", "poor");
+	}
+
+	FText Hours(int32 Value)
+	{
+		return FText::Format(LOCTEXT("HoursValue", "Takes {0} h."), FText::AsNumber(Value));
+	}
+
 	TSharedRef<SVerticalBox> Stack(std::initializer_list<TSharedRef<SWidget>> Widgets)
 	{
 		TSharedRef<SVerticalBox> Box = SNew(SVerticalBox);
 		for (const TSharedRef<SWidget>& Widget : Widgets)
 		{
-			Box->AddSlot().AutoHeight().Padding(0.0f, 4.0f)[Widget];
+			Box->AddSlot().AutoHeight().Padding(0.0f, 5.0f)[Widget];
 		}
 		return Box;
 	}
 
-	void Add(const TSharedRef<SVerticalBox>& Box, const TSharedRef<SWidget>& Widget, float Top = 4.0f)
+	void Add(const TSharedRef<SVerticalBox>& Box, const TSharedRef<SWidget>& Widget, float Top = 5.0f)
 	{
-		Box->AddSlot().AutoHeight().Padding(0.0f, Top, 0.0f, 4.0f)[Widget];
+		Box->AddSlot().AutoHeight().Padding(0.0f, Top, 0.0f, 5.0f)[Widget];
 	}
 }
 
 using namespace CraftHUD;
 
 SCraftLoopHUD::SCraftLoopHUD()
-	: PanelBrush(FLinearColor(0.035f, 0.03f, 0.03f, 0.86f))
-	, NoticeBrush(FLinearColor(0.12f, 0.08f, 0.04f, 0.92f))
+	: PanelBrush(CraftStyle::Panel)
+	, NoticeBrush(FLinearColor(0.20f, 0.13f, 0.05f, 0.96f))
 {
 }
 
@@ -170,28 +193,28 @@ void SCraftLoopHUD::Construct(const FArguments& InArgs)
 	[
 		SNew(SOverlay)
 		// Header: stage, clock, purse.
-		+ SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Top).Padding(16.0f)
+		+ SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Top).Padding(20.0f)
 		[
 			SNew(SBorder)
 			.BorderImage(&PanelBrush)
-			.Padding(FMargin(12.0f, 8.0f))
+			.Padding(FMargin(16.0f, 10.0f))
 			[
 				SNew(STextBlock)
 				.Text(this, &SCraftLoopHUD::GetHeaderText)
-				.Font(Font(13, true))
-				.ColorAndOpacity(TextColor)
+				.Font(Font(18, true))
+				.ColorAndOpacity(CraftStyle::TextColor)
 			]
 		]
 		// Stage panel on the right, leaving the cloth visible.
-		+ SOverlay::Slot().HAlign(HAlign_Right).VAlign(VAlign_Center).Padding(16.0f)
+		+ SOverlay::Slot().HAlign(HAlign_Right).VAlign(VAlign_Center).Padding(20.0f)
 		[
 			SNew(SBox)
 			.WidthOverride(PanelWidth)
-			.MaxDesiredHeight(760.0f)
+			.MaxDesiredHeight(900.0f)
 			[
 				SNew(SBorder)
 				.BorderImage(&PanelBrush)
-				.Padding(16.0f)
+				.Padding(20.0f)
 				[
 					SNew(SScrollBox)
 					+ SScrollBox::Slot()
@@ -201,21 +224,21 @@ void SCraftLoopHUD::Construct(const FArguments& InArgs)
 				]
 			]
 		]
-		// Notices from scheduled events.
-		+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Bottom).Padding(16.0f, 16.0f, 16.0f, 40.0f)
+		// Notices from scheduled events and stage results.
+		+ SOverlay::Slot().HAlign(HAlign_Center).VAlign(VAlign_Bottom).Padding(20.0f, 20.0f, 20.0f, 48.0f)
 		[
 			SNew(SBox)
-			.MaxDesiredWidth(640.0f)
+			.MaxDesiredWidth(720.0f)
 			.Visibility(this, &SCraftLoopHUD::GetNoticeVisibility)
 			[
 				SNew(SBorder)
 				.BorderImage(&NoticeBrush)
-				.Padding(FMargin(14.0f, 10.0f))
+				.Padding(FMargin(18.0f, 12.0f))
 				[
 					SNew(STextBlock)
 					.Text_Lambda([this]() { return NoticeText; })
-					.Font(Font(13))
-					.ColorAndOpacity(AccentColor)
+					.Font(Font(18, true))
+					.ColorAndOpacity(FLinearColor(1.0f, 0.88f, 0.62f))
 					.AutoWrapText(true)
 				]
 			]
@@ -225,12 +248,39 @@ void SCraftLoopHUD::Construct(const FArguments& InArgs)
 	Refresh();
 }
 
+int32 SCraftLoopHUD::PanelKey() const
+{
+	const UCraftLoopSubsystem* Subsystem = Loop.Get();
+	if (!Subsystem)
+	{
+		return INDEX_NONE;
+	}
+	int32 Phase = Subsystem->GetStagePhase();
+	// "Ready to dip" and "dipping" share one panel: rebuilding would destroy the button being held.
+	if (Subsystem->GetStage() == ECraftStage::Dye && Phase == 2)
+	{
+		Phase = 1;
+	}
+	return static_cast<int32>(Subsystem->GetStage()) * 10 + Phase;
+}
+
 void SCraftLoopHUD::Refresh()
 {
-	if (PanelBox.IsValid())
+	const UCraftLoopSubsystem* Subsystem = Loop.Get();
+	if (!PanelBox.IsValid() || !Subsystem)
 	{
-		PanelBox->SetContent(BuildPanel());
+		return;
 	}
+	// Interactive panels read live state through lambdas; rebuilding them mid-drag or mid-hold would break the input.
+	const ECraftStage Stage = Subsystem->GetStage();
+	const bool bInteractive = Stage == ECraftStage::Arrange || Stage == ECraftStage::Cut || Stage == ECraftStage::Dye || Stage == ECraftStage::Stitch;
+	const int32 Key = PanelKey();
+	if (bInteractive && Key == BuiltPanelKey)
+	{
+		return;
+	}
+	BuiltPanelKey = Key;
+	PanelBox->SetContent(BuildPanel());
 }
 
 void SCraftLoopHUD::ShowNotice(const FText& Message)
@@ -251,7 +301,7 @@ FText SCraftLoopHUD::GetHeaderText() const
 	{
 		return FText::GetEmpty();
 	}
-	return FText::Format(LOCTEXT("Header", "{0}   ·   Hour {1}   ·   {2} gold"),
+	return FText::Format(LOCTEXT("Header", "{0}    Hour {1}    {2} gold"),
 		StageName(Subsystem->GetStage()), FText::AsNumber(Subsystem->GetHour()), FText::AsNumber(Subsystem->GetGold()));
 }
 
@@ -292,8 +342,8 @@ TSharedRef<SWidget> SCraftLoopHUD::BuildCommission()
 		Title(Commission.CustomerName),
 		Body(Commission.RequestText),
 		SNew(SSpacer).Size(FVector2D(1.0f, 6.0f)),
-		Stat(LOCTEXT("Needs", "Needs"), EffectName(Commission.RequiredEffect)),
-		Stat(LOCTEXT("Danger", "Expected danger"), FText::Format(LOCTEXT("DangerValue", "{0}, {1}"), Commission.HazardName, Commission.EnemyName)),
+		Stat(LOCTEXT("Needs", "Needs"), EffectName(Commission.RequiredEffect), Accent),
+		Stat(LOCTEXT("Danger", "Danger"), FText::Format(LOCTEXT("DangerValue", "{0}, {1}"), Commission.HazardName, Commission.EnemyName)),
 		Stat(LOCTEXT("Pay", "Payment"), FText::Format(LOCTEXT("PayValue", "{0} gold"), FText::AsNumber(Commission.RewardGold))),
 		SNew(SSpacer).Size(FVector2D(1.0f, 8.0f)),
 		Button(LOCTEXT("Accept", "Accept the commission"), FText::GetEmpty(), [Weak]() { if (Weak.IsValid()) { Weak->AcceptCommission(); } })
@@ -308,15 +358,16 @@ TSharedRef<SWidget> SCraftLoopHUD::BuildBlueprintChoice()
 
 	TSharedRef<SVerticalBox> Box = Stack({
 		Title(LOCTEXT("BlueprintTitle", "Which garment?")),
-		Body(LOCTEXT("BlueprintBody", "Blueprints fix the silhouette and the seams. Pick one that suits the request."), MutedColor)
+		Body(LOCTEXT("BlueprintBody", "A blueprint fixes the silhouette, the pattern pieces and the seams."), Muted)
 	});
 	for (const FCraftGarmentBlueprint& Blueprint : UCraftSettings::Get()->Blueprints)
 	{
 		const bool bAllowed = Commission.AllowedBlueprints.Num() == 0 || Commission.AllowedBlueprints.Contains(Blueprint.Id);
 		const FName Id = Blueprint.Id;
 		const FText Detail = bAllowed
-			? FText::Format(LOCTEXT("BlueprintDetail", "{0}\nWeight {1} · wearable up to {2} · coverage {3}"),
-				Blueprint.Description, Number(Blueprint.BaseWeight), Number(Blueprint.MaxWeight), Percent(Blueprint.BaseCoverage))
+			? FText::Format(LOCTEXT("BlueprintDetail", "{0}\nWeight {1}, wearable up to {2} · coverage {3} · {4} pieces, {5} seams"),
+				Blueprint.Description, Number(Blueprint.BaseWeight), Number(Blueprint.MaxWeight), Percent(Blueprint.BaseCoverage),
+				FText::AsNumber(Blueprint.Pieces.Num()), FText::AsNumber(Blueprint.SeamCount))
 			: LOCTEXT("BlueprintNotSuitable", "Not what this customer needs.");
 		Add(Box, Button(Blueprint.DisplayName, Detail, [Weak, Id]() { if (Weak.IsValid()) { Weak->ChooseBlueprint(Id); } }, bAllowed));
 	}
@@ -328,13 +379,14 @@ TSharedRef<SWidget> SCraftLoopHUD::BuildFabricChoice()
 	TWeakObjectPtr<UCraftLoopSubsystem> Weak = Loop;
 	TSharedRef<SVerticalBox> Box = Stack({
 		Title(LOCTEXT("FabricTitle", "Which cloth?")),
-		Body(LOCTEXT("FabricBody", "Heavy cloth stops blows but tires the wearer and holds less wax. Light cloth carries more inscription."), MutedColor)
+		Body(LOCTEXT("FabricBody", "Heavy cloth stops blows but tires the wearer and holds less wax. Light cloth carries more inscription."), Muted)
 	});
 	for (const FCraftFabric& Fabric : UCraftSettings::Get()->Fabrics)
 	{
 		const FName Id = Fabric.Id;
-		const FText Detail = FText::Format(LOCTEXT("FabricDetail", "{0}\nWeight ×{1} · durability {2} · wax capacity {3}"),
-			Fabric.Description, Number(Fabric.Weight), Number(Fabric.Durability, 0), Percent(Fabric.MagicCapacity));
+		const FText Detail = FText::Format(LOCTEXT("FabricDetail", "{0}\nWeight ×{1} · durability {2} · wax capacity {3} · bolt {4}×{5}"),
+			Fabric.Description, Number(Fabric.Weight), Number(Fabric.Durability, 0), Percent(Fabric.MagicCapacity),
+			FText::AsNumber(Fabric.SheetWidth), FText::AsNumber(Fabric.SheetHeight));
 		Add(Box, Button(Fabric.DisplayName, Detail, [Weak, Id]() { if (Weak.IsValid()) { Weak->ChooseFabric(Id); } }));
 	}
 	return Box;
@@ -343,42 +395,77 @@ TSharedRef<SWidget> SCraftLoopHUD::BuildFabricChoice()
 TSharedRef<SWidget> SCraftLoopHUD::BuildArrange()
 {
 	TWeakObjectPtr<UCraftLoopSubsystem> Weak = Loop;
-	const FText Cost = FText::Format(LOCTEXT("CostHours", "Takes {0} h."), FText::AsNumber(UCraftSettings::Get()->CostArrange));
+	auto LayoutText = [Weak]()
+	{
+		FCraftGarmentBlueprint Blueprint;
+		FCraftFabric Fabric;
+		if (!Weak.IsValid() || !Weak->GetChosenBlueprint(Blueprint) || !Weak->GetChosenFabric(Fabric))
+		{
+			return FText::GetEmpty();
+		}
+		const TArray<FCraftPiecePlacement> Placements = Weak->GetPlacements();
+		int32 Placed = 0;
+		for (const FCraftPiecePlacement& Placement : Placements)
+		{
+			Placed += Placement.bPlaced ? 1 : 0;
+		}
+		float Cross = 0.0f;
+		float Waste = 0.0f;
+		UCraftRules::EvaluateLayout(Fabric, Blueprint, Placements, Cross, Waste);
+		return FText::Format(LOCTEXT("LayoutStats", "{0} of {1} pieces placed · {2} across the grain"),
+			FText::AsNumber(Placed), FText::AsNumber(Placements.Num()), Percent(Cross));
+	};
+
 	return Stack({
 		Title(LOCTEXT("ArrangeTitle", "Lay out the pattern")),
-		Body(LOCTEXT("ArrangeBody", "Place the blueprint pieces on the cloth. Along the grain the weave stays strong; on the bias the panels drape and cover more."), MutedColor),
-		Button(LOCTEXT("Grain", "Along the grain"), FText::Format(LOCTEXT("GrainDetail", "Full durability. {0}"), Cost),
-			[Weak]() { if (Weak.IsValid()) { Weak->CommitArrangement(false); } }),
-		Button(LOCTEXT("Bias", "On the bias"), FText::Format(LOCTEXT("BiasDetail", "+5% coverage, −10% durability. {0}"), Cost),
-			[Weak]() { if (Weak.IsValid()) { Weak->CommitArrangement(true); } })
+		Body(LOCTEXT("ArrangeBody",
+			"Drag each piece onto the cloth. Right-click (or R while dragging) turns it across the grain: "
+			"it drapes and covers better, but the weave is weaker that way. Drop a piece outside the cloth to take it back."), Muted),
+		SNew(SCraftArrangeBoard).Loop(Loop),
+		LiveText(TAttribute<FText>::CreateLambda(LayoutText), CraftStyle::TextColor, BodySize, true),
+		Button(LOCTEXT("CommitLayout", "Pin the pattern"), Hours(UCraftSettings::Get()->CostArrange),
+			[Weak]() { if (Weak.IsValid()) { Weak->CommitArrangement(); } },
+			TAttribute<bool>::CreateLambda([Weak]() { return Weak.IsValid() && Weak->CanCommitArrangement(); }))
 	});
 }
 
 TSharedRef<SWidget> SCraftLoopHUD::BuildCut()
 {
 	TWeakObjectPtr<UCraftLoopSubsystem> Weak = Loop;
-	const UCraftSettings* Settings = UCraftSettings::Get();
-	const FCraftGarment Garment = Loop->GetGarment();
-	const FCraftGarmentBlueprint* Blueprint = Settings->FindBlueprint(Garment.BlueprintId);
-	const FCraftFabric* Fabric = Settings->FindFabric(Garment.FabricId);
-
-	TSharedRef<SVerticalBox> Box = Stack({
-		Title(LOCTEXT("CutTitle", "Cut the panels")),
-		Body(FText::Format(LOCTEXT("CutBody", "Longer panels cover more of the body but weigh more. Takes {0} h."), FText::AsNumber(Settings->CostCut)), MutedColor)
-	});
-	for (const ECraftCutStyle Cut : { ECraftCutStyle::Short, ECraftCutStyle::Standard, ECraftCutStyle::Long })
+	auto CutText = [Weak]()
 	{
-		FText Detail;
-		if (Blueprint && Fabric)
+		FCraftGarmentBlueprint Blueprint;
+		FCraftFabric Fabric;
+		if (!Weak.IsValid() || !Weak->GetChosenBlueprint(Blueprint) || !Weak->GetChosenFabric(Fabric))
 		{
-			const float Weight = Blueprint->BaseWeight * Fabric->Weight * UCraftRules::CutWeightMultiplier(Cut);
-			Detail = FText::Format(LOCTEXT("CutDetail", "Coverage ×{0} · weight {1}{2}"),
-				Number(UCraftRules::CutCoverageMultiplier(Cut), 2), Number(Weight, 2),
-				Weight > Blueprint->MaxWeight ? LOCTEXT("TooHeavy", "  (too heavy, will slow them)") : FText::GetEmpty());
+			return FText::GetEmpty();
 		}
-		Add(Box, Button(CutName(Cut), Detail, [Weak, Cut]() { if (Weak.IsValid()) { Weak->CommitCut(Cut); } }));
-	}
-	return Box;
+		const float Length = Weak->GetCutLength();
+		const float Weight = Blueprint.BaseWeight * Fabric.Weight * UCraftRules::CutWeightMultiplier(Length);
+		return FText::Format(LOCTEXT("CutStats", "Length ×{0} · coverage ×{1} · weight {2} of {3}{4}"),
+			Number(Length, 2), Number(UCraftRules::CutCoverageMultiplier(Length), 2), Number(Weight, 2), Number(Blueprint.MaxWeight, 2),
+			Weight > Blueprint.MaxWeight ? LOCTEXT("TooHeavy", "\nToo heavy: the wearer will tire.") : FText::GetEmpty());
+	};
+	auto CutColor = [Weak]()
+	{
+		FCraftGarmentBlueprint Blueprint;
+		FCraftFabric Fabric;
+		if (Weak.IsValid() && Weak->GetChosenBlueprint(Blueprint) && Weak->GetChosenFabric(Fabric)
+			&& Blueprint.BaseWeight * Fabric.Weight * UCraftRules::CutWeightMultiplier(Weak->GetCutLength()) > Blueprint.MaxWeight)
+		{
+			return FSlateColor(Warning);
+		}
+		return FSlateColor(CraftStyle::TextColor);
+	};
+
+	return Stack({
+		Title(LOCTEXT("CutTitle", "Cut the panels")),
+		Body(LOCTEXT("CutBody", "Drag the hem up or down. A longer panel covers more of the body, but it weighs more."), Muted),
+		SNew(SCraftCutPanel).Loop(Loop),
+		SNew(STextBlock).Text_Lambda(CutText).ColorAndOpacity_Lambda(CutColor).Font(Font(BodySize, true)).AutoWrapText(true),
+		Button(LOCTEXT("CommitCut", "Cut along the line"), Hours(UCraftSettings::Get()->CostCut),
+			[Weak]() { if (Weak.IsValid()) { Weak->CommitCut(); } })
+	});
 }
 
 TSharedRef<SWidget> SCraftLoopHUD::BuildCanting()
@@ -390,7 +477,7 @@ TSharedRef<SWidget> SCraftLoopHUD::BuildCanting()
 		Title(LOCTEXT("CantingTitle", "Canting")),
 		Body(LOCTEXT("CantingBody",
 			"Draw on the cloth with the mouse. Closed outlines keep the dye out, so the ward holds. "
-			"Fill the cloth for strength, but past its capacity the wax bleeds and the ward turns unstable."), MutedColor)
+			"Fill the cloth for strength, but past its capacity the wax bleeds and the ward turns unstable."), Muted)
 	});
 
 	if (bLive)
@@ -404,35 +491,31 @@ TSharedRef<SWidget> SCraftLoopHUD::BuildCanting()
 			}
 			return Inscription;
 		};
-		Add(Box, SNew(STextBlock).Text(LOCTEXT("Capacity", "Wax on the cloth")).Font(Font(12)).ColorAndOpacity(MutedColor), 8.0f);
-		Add(Box, SNew(SBox).HeightOverride(14.0f)
+		Add(Box, Body(LOCTEXT("Capacity", "Wax on the cloth (red = over capacity)"), Muted), 8.0f);
+		Add(Box, SNew(SBox).HeightOverride(18.0f)
 			[
 				SNew(SProgressBar)
 				.Percent_Lambda([Live]() { return TOptional<float>(FMath::Min(Live().CapacityFill, 1.0f)); })
-				.FillColorAndOpacity_Lambda([Live]() { return FSlateColor(Live().CapacityFill > 1.0f ? WarningColor : AccentColor); })
+				.FillColorAndOpacity_Lambda([Live]() { return FSlateColor(Live().CapacityFill > 1.0f ? Warning : Accent); })
 			]);
-		Add(Box, SNew(STextBlock)
-			.Font(Font(12))
-			.ColorAndOpacity(TextColor)
-			.AutoWrapText(true)
-			.Text_Lambda([Live]()
+		Add(Box, LiveText(TAttribute<FText>::CreateLambda([Live]()
 			{
 				const FCraftInscription I = Live();
 				return FText::Format(LOCTEXT("LiveStats", "{0} of capacity · {1} strokes · {2} closed shapes\nStrength {3} · Stability {4}"),
 					Percent(I.CapacityFill), FText::AsNumber(I.StrokeCount), FText::AsNumber(I.EnclosedShapes),
 					Percent(I.Strength), Percent(I.Stability));
-			}));
+			}), CraftStyle::TextColor, BodySize, true));
 		Add(Box, Button(LOCTEXT("Undo", "Undo last stroke"), FText::GetEmpty(), [Weak]() { if (Weak.IsValid()) { Weak->UndoCantingStroke(); } }), 8.0f);
 	}
 	else
 	{
-		Add(Box, Body(LOCTEXT("MeasuredLater", "The wax is measured when you finish."), MutedColor));
+		Add(Box, Body(LOCTEXT("MeasuredLater", "The wax is measured when you finish."), Muted));
 	}
 
 	Add(Box, Button(LOCTEXT("Clear", "Scrape it all off"), LOCTEXT("ClearDetail", "Start the drawing again."),
 		[Weak]() { if (Weak.IsValid()) { Weak->ClearCanting(); } }));
 	Add(Box, Button(LOCTEXT("FinishCanting", "Finish canting"),
-		FText::Format(LOCTEXT("FinishCantingDetail", "Let the wax set. Takes {0} h."), FText::AsNumber(UCraftSettings::Get()->CostCanting)),
+		FText::Format(LOCTEXT("FinishCantingDetail", "Let the wax set. {0}"), Hours(UCraftSettings::Get()->CostCanting)),
 		[Weak]() { if (Weak.IsValid()) { Weak->FinishCanting(); } }), 8.0f);
 	return Box;
 }
@@ -441,38 +524,113 @@ TSharedRef<SWidget> SCraftLoopHUD::BuildDye()
 {
 	TWeakObjectPtr<UCraftLoopSubsystem> Weak = Loop;
 	const UCraftSettings* Settings = UCraftSettings::Get();
-	if (Loop->IsBusy())
+	const int32 Phase = Loop->GetStagePhase();
+
+	if (Phase >= 3)
 	{
-		return Stack({ Title(LOCTEXT("DyeingTitle", "Dyeing…")), Body(LOCTEXT("DyeingBody", "The cloth soaks, then the wax is boiled away (nglorod)."), MutedColor) });
+		return Stack({ Title(LOCTEXT("RevealTitle", "Revealing…")), Body(LOCTEXT("RevealBody", "The wax is boiled away (nglorod). Where it sealed the cloth, your pattern shows."), Muted) });
 	}
-	const bool bIndigo = Loop->IsIndigoAvailable();
-	const FText Cost = FText::Format(LOCTEXT("DyeCost", "Takes {0} h."), FText::AsNumber(Settings->CostDye));
+
+	if (Phase == 0)
+	{
+		const bool bIndigo = Loop->IsIndigoAvailable();
+		return Stack({
+			Title(LOCTEXT("DyeTitle", "Choose the dye vat")),
+			Body(LOCTEXT("DyeBody", "Wherever the wax sealed the cloth, the dye can't reach. That is your pattern."), Muted),
+			Button(LOCTEXT("Soga", "Soga brown"), LOCTEXT("SogaDetail", "The workshop's own bark dye."),
+				[Weak]() { if (Weak.IsValid()) { Weak->ChooseDye(false); } }),
+			Button(LOCTEXT("Indigo", "Indigo"),
+				bIndigo
+					? FText::Format(LOCTEXT("IndigoDetail", "Bu Sari's gift. Sets the resist firmly: +{0} stability."), Percent(Settings->IndigoStabilityBonus))
+					: FText::Format(LOCTEXT("IndigoLocked", "None in the workshop yet. A neighbour may bring some around hour {0}."), FText::AsNumber(Settings->IndigoDeliveryHour)),
+				[Weak]() { if (Weak.IsValid()) { Weak->ChooseDye(true); } }, bIndigo)
+		});
+	}
+
+	// Phases 1-2: hold to dip.
+	TArray<FCraftGaugeZone> Zones;
+	Zones.Add({ 0.0f, Settings->DipGoodMin, FLinearColor(0.32f, 0.30f, 0.26f) });
+	Zones.Add({ Settings->DipGoodMin, Settings->DipGoodMax, FLinearColor(0.22f, 0.55f, 0.24f) });
+	Zones.Add({ Settings->DipGoodMax, 1.0f, FLinearColor(0.62f, 0.20f, 0.16f) });
+
+	TSharedRef<SButton> DipButton = MakeButton(LOCTEXT("Dip", "Hold to dip the cloth"), LOCTEXT("DipDetail", "Release to lift it out."), true,
+		FSimpleDelegate::CreateLambda([Weak]() { if (Weak.IsValid()) { Weak->StartDip(); } }),
+		FSimpleDelegate::CreateLambda([Weak]() { if (Weak.IsValid()) { Weak->StopDip(); } }));
+
+	auto DepthWord = [Weak, Settings]()
+	{
+		const float Depth = Weak.IsValid() ? Weak->GetDipDepth() : 0.0f;
+		if (Depth < Settings->DipGoodMin) return LOCTEXT("DepthPale", "Pale");
+		if (Depth <= Settings->DipGoodMax) return LOCTEXT("DepthGood", "Deep and even: lift now");
+		return LOCTEXT("DepthCrack", "Too long: the wax is cracking");
+	};
+
 	return Stack({
-		Title(LOCTEXT("DyeTitle", "Dye & reveal")),
-		Body(LOCTEXT("DyeBody", "Wherever the wax sealed the cloth, the dye can't reach. That is your pattern."), MutedColor),
-		Button(LOCTEXT("Soga", "Soga brown"), FText::Format(LOCTEXT("SogaDetail", "The workshop's own bark dye. {0}"), Cost),
-			[Weak]() { if (Weak.IsValid()) { Weak->ApplyDye(false); } }),
-		Button(LOCTEXT("Indigo", "Indigo"),
-			bIndigo
-				? FText::Format(LOCTEXT("IndigoDetail", "Bu Sari's gift. Sets the resist firmly: +{0} stability. {1}"), Percent(Settings->IndigoStabilityBonus), Cost)
-				: FText::Format(LOCTEXT("IndigoLocked", "None in the workshop yet. A neighbour may bring some around hour {0}."), FText::AsNumber(Settings->IndigoDeliveryHour)),
-			[Weak]() { if (Weak.IsValid()) { Weak->ApplyDye(true); } }, bIndigo)
+		Title(LOCTEXT("DipTitle", "Dip the cloth")),
+		Body(FText::Format(LOCTEXT("DipBody", "Hold the button to lower the cloth into the {0} vat. Lift it out while the marker is in the green band. {1}"),
+			Loop->GetGarment().bIndigoDye ? LOCTEXT("VatIndigo", "indigo") : LOCTEXT("VatSoga", "soga"), Hours(Settings->CostDye)), Muted),
+		SNew(SCraftGauge)
+			.Value_Lambda([Weak]() { return Weak.IsValid() ? Weak->GetDipDepth() : 0.0f; })
+			.Zones(Zones)
+			.bFill(true),
+		LiveText(TAttribute<FText>::CreateLambda(DepthWord), CraftStyle::TextColor, BodySize, true),
+		DipButton
 	});
 }
 
 TSharedRef<SWidget> SCraftLoopHUD::BuildStitch()
 {
 	TWeakObjectPtr<UCraftLoopSubsystem> Weak = Loop;
-	if (Loop->IsBusy())
+	const UCraftSettings* Settings = UCraftSettings::Get();
+	const int32 Phase = Loop->GetStagePhase();
+
+	if (Phase >= 2)
 	{
-		return Stack({ Title(LOCTEXT("StitchingTitle", "Stitching…")), Body(LOCTEXT("StitchingBody", "Joining the panels along the blueprint's seams."), MutedColor) });
+		return Stack({ Title(LOCTEXT("AssembleTitle", "Assembling…")), Body(LOCTEXT("AssembleBody", "The panels come together along the blueprint's seams."), Muted) });
 	}
+	if (Phase == 0)
+	{
+		FCraftGarmentBlueprint Blueprint;
+		Loop->GetChosenBlueprint(Blueprint);
+		return Stack({
+			Title(LOCTEXT("StitchTitle", "Stitch")),
+			Body(FText::Format(LOCTEXT("StitchBody",
+				"Join the panels along {0} seams, {1} stitches each. Press when the needle is in the middle of the bar: "
+				"neat stitches make the garment tougher. {2}"),
+				FText::AsNumber(Blueprint.SeamCount), FText::AsNumber(Settings->StitchesPerSeam), Hours(Settings->CostStitch)), Muted),
+			Button(LOCTEXT("Thread", "Thread the needle"), FText::GetEmpty(), [Weak]() { if (Weak.IsValid()) { Weak->StartStitching(); } })
+		});
+	}
+
+	const float Tolerance = Settings->StitchTolerance;
+	TArray<FCraftGaugeZone> Zones;
+	Zones.Add({ 0.5f - Tolerance, 0.5f + Tolerance, FLinearColor(0.40f, 0.36f, 0.20f) });
+	Zones.Add({ 0.5f - Tolerance * 0.4f, 0.5f + Tolerance * 0.4f, FLinearColor(0.22f, 0.55f, 0.24f) });
+
+	TSharedRef<SButton> StitchButton = MakeButton(LOCTEXT("StitchNow", "Stitch!"), LOCTEXT("StitchNowDetail", "Press when the needle is in the green."), true);
+	StitchButton->SetOnClicked(FOnClicked::CreateLambda([Weak]() { if (Weak.IsValid()) { Weak->PressStitch(); } return FReply::Handled(); }));
+	StitchButton->SetClickMethod(EButtonClickMethod::MouseDown);
+
+	auto Progress = [Weak]()
+	{
+		if (!Weak.IsValid())
+		{
+			return FText::GetEmpty();
+		}
+		const float Last = Weak->GetLastStitchAccuracy();
+		return FText::Format(LOCTEXT("StitchProgress", "Stitch {0} of {1}{2}"),
+			FText::AsNumber(FMath::Min(Weak->GetStitchesDone() + 1, Weak->GetStitchesTotal())), FText::AsNumber(Weak->GetStitchesTotal()),
+			Last < 0.0f ? FText::GetEmpty() : FText::Format(LOCTEXT("LastStitch", "   ·   last one: {0}"), QualityWord(Last)));
+	};
+
 	return Stack({
-		Title(LOCTEXT("StitchTitle", "Stitch")),
-		Body(LOCTEXT("StitchBody", "Join the dyed panels along the blueprint's seams to make the garment."), MutedColor),
-		Button(LOCTEXT("StitchButton", "Stitch the garment"),
-			FText::Format(LOCTEXT("StitchDetail", "Takes {0} h."), FText::AsNumber(UCraftSettings::Get()->CostStitch)),
-			[Weak]() { if (Weak.IsValid()) { Weak->Stitch(); } })
+		Title(LOCTEXT("StitchingTitle", "Stitching")),
+		SNew(SCraftGauge)
+			.Value_Lambda([Weak]() { return Weak.IsValid() ? Weak->GetStitchMarker() : 0.0f; })
+			.Zones(Zones)
+			.Height(40.0f),
+		LiveText(TAttribute<FText>::CreateLambda(Progress), CraftStyle::TextColor, BodySize, true),
+		StitchButton
 	});
 }
 
@@ -488,27 +646,30 @@ TSharedRef<SWidget> SCraftLoopHUD::BuildInspect()
 	TSharedRef<SVerticalBox> Box = Stack({
 		Title(FText::Format(LOCTEXT("InspectTitle", "{0} in {1}"),
 			Blueprint ? Blueprint->DisplayName : FText::GetEmpty(), Fabric ? Fabric->DisplayName : FText::GetEmpty())),
-		Body(FText::Format(LOCTEXT("InspectChoices", "{0} cut · {1} · {2} dye"),
-			CutName(G.CutStyle),
-			G.bOnBias ? LOCTEXT("OnBias", "on the bias") : LOCTEXT("OnGrain", "along the grain"),
-			G.bIndigoDye ? LOCTEXT("IndigoDye", "indigo") : LOCTEXT("SogaDye", "soga")), MutedColor),
+		Body(FText::Format(LOCTEXT("InspectChoices", "Hem ×{0} · {1} across the grain · {2} dye, {3} dip · {4} seams"),
+			Number(G.CutLength, 2), Percent(G.CrossGrainFraction),
+			G.bIndigoDye ? LOCTEXT("IndigoDye", "indigo") : LOCTEXT("SogaDye", "soga"), QualityWord(G.DyeQuality), QualityWord(G.SeamQuality)), Muted),
 		Stat(LOCTEXT("Weight", "Weight"), FText::Format(LOCTEXT("WeightValue", "{0} / {1}"), Number(G.Weight, 2), Number(Blueprint ? Blueprint->MaxWeight : 0.0f, 2)),
-			bHeavy ? WarningColor : TextColor),
+			bHeavy ? Warning : CraftStyle::TextColor),
 		Stat(LOCTEXT("Coverage", "Coverage"), Percent(G.Coverage)),
 		Stat(LOCTEXT("Durability", "Durability"), Number(G.Durability, 0)),
 		Stat(LOCTEXT("Effect", "Inscription"), EffectName(G.Effect)),
 		Stat(LOCTEXT("Shapes", "Closed shapes"), FText::AsNumber(G.Inscription.EnclosedShapes)),
 		Stat(LOCTEXT("Strength", "Strength"), Percent(G.Inscription.Strength)),
-		Stat(LOCTEXT("Stability", "Stability"), Percent(G.Inscription.Stability), G.Inscription.CapacityFill > 1.0f ? WarningColor : TextColor),
-		Stat(LOCTEXT("Protection", "Protection"), Number(G.Protection, 0), AccentColor)
+		Stat(LOCTEXT("Stability", "Stability"), Percent(G.Inscription.Stability), G.Inscription.CapacityFill > 1.0f ? Warning : CraftStyle::TextColor),
+		Stat(LOCTEXT("Protection", "Protection"), Number(G.Protection, 0), Accent)
 	});
 	if (bHeavy)
 	{
-		Add(Box, Body(LOCTEXT("HeavyWarning", "It's heavy for this blueprint. The wearer will tire."), WarningColor));
+		Add(Box, Body(LOCTEXT("HeavyWarning", "It's heavy for this blueprint. The wearer will tire."), Warning));
 	}
 	if (G.Inscription.CapacityFill > 1.0f)
 	{
-		Add(Box, Body(LOCTEXT("OverfillWarning", "Too much wax for this cloth; the resist bled and the ward is unstable."), WarningColor));
+		Add(Box, Body(LOCTEXT("OverfillWarning", "Too much wax for this cloth; the resist bled and the ward is unstable."), Warning));
+	}
+	if (G.Inscription.WaxCoverage <= 0.0f)
+	{
+		Add(Box, Body(LOCTEXT("NoInscription", "There is no inscription on it. It is only cloth."), Warning));
 	}
 	Add(Box, Button(LOCTEXT("LooksGood", "It's ready"), FText::GetEmpty(), [Weak]() { if (Weak.IsValid()) { Weak->ConfirmInspection(); } }), 8.0f);
 	return Box;
@@ -521,7 +682,7 @@ TSharedRef<SWidget> SCraftLoopHUD::BuildDeliver()
 	Loop->GetCurrentCommission(Commission);
 	return Stack({
 		Title(LOCTEXT("DeliverTitle", "Deliver")),
-		Body(FText::Format(LOCTEXT("DeliverBody", "{0} tries it on, nods, and pays the deposit."), Commission.CustomerName), MutedColor),
+		Body(FText::Format(LOCTEXT("DeliverBody", "{0} tries it on, nods, and pays the deposit."), Commission.CustomerName), Muted),
 		Button(LOCTEXT("HandOver", "Hand it over and see them off"), FText::GetEmpty(), [Weak]() { if (Weak.IsValid()) { Weak->DeliverGarment(); } })
 	});
 }
@@ -536,16 +697,17 @@ TSharedRef<SWidget> SCraftLoopHUD::BuildExpedition()
 
 	TSharedRef<SVerticalBox> Box = Stack({
 		Title(LOCTEXT("ExpeditionTitle", "The expedition")),
-		SNew(SBox).HeightOverride(12.0f)
+		Stat(LOCTEXT("Health", "Health"), FText::Format(LOCTEXT("HealthValue", "{0} / 100"), Number(HP, 0)), HP >= 60.0f ? Good : Warning),
+		SNew(SBox).HeightOverride(16.0f)
 		[
-			SNew(SProgressBar).Percent(HP / 100.0f).FillColorAndOpacity(HP > 60.0f ? AccentColor : WarningColor)
+			SNew(SProgressBar).Percent(HP / 100.0f).FillColorAndOpacity(HP >= 60.0f ? Good : Warning)
 		]
 	});
 	for (int32 Index = 0; Index < Shown; ++Index)
 	{
 		const FCraftExpeditionEvent& Event = Result.Events[Index];
-		const FLinearColor Color = Event.Type == ECraftEventType::InscriptionActivates ? AccentColor
-			: (Event.Damage > 0.0f ? WarningColor : TextColor);
+		const FLinearColor Color = Event.Type == ECraftEventType::InscriptionActivates ? Accent
+			: (Event.Damage > 0.0f ? Warning : CraftStyle::TextColor);
 		Add(Box, Body(Event.Text, Color));
 	}
 	if (bDone)
@@ -603,7 +765,7 @@ TSharedRef<SWidget> SCraftLoopHUD::BuildFinished()
 	}
 	return Stack({
 		Title(LOCTEXT("FinishedTitle", "The day's work is done")),
-		Stat(LOCTEXT("Earned", "Gold earned"), FText::AsNumber(Loop->GetGold())),
+		Stat(LOCTEXT("Earned", "Gold earned"), FText::AsNumber(Loop->GetGold()), Accent),
 		Stat(LOCTEXT("Hours", "Hours worked"), FText::AsNumber(Loop->GetHour())),
 		Stat(LOCTEXT("Motifs", "Motifs learned"), Motifs.Num() > 0 ? FText::FromString(FString::Join(Motifs, TEXT(", "))) : LOCTEXT("NoMotifs", "none")),
 		Button(LOCTEXT("Restart", "Start the day again"), FText::GetEmpty(), [Weak]() { if (Weak.IsValid()) { Weak->RestartLoop(); } })

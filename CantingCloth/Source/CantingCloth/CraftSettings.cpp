@@ -20,6 +20,8 @@ UCraftSettings::UCraftSettings()
 		Mori.Weight = 1.0f;
 		Mori.Durability = 40.0f;
 		Mori.MagicCapacity = 0.12f;
+		Mori.SheetWidth = 10;
+		Mori.SheetHeight = 14;
 
 		FCraftFabric& Blacu = Fabrics.AddDefaulted_GetRef();
 		Blacu.Id = TEXT("Blacu_Canvas");
@@ -28,7 +30,19 @@ UCraftSettings::UCraftSettings()
 		Blacu.Weight = 1.5f;
 		Blacu.Durability = 70.0f;
 		Blacu.MagicCapacity = 0.08f;
+		// A narrow bolt: the cloak's two body panels can't sit side by side along the grain.
+		Blacu.SheetWidth = 9;
+		Blacu.SheetHeight = 15;
 	}
+
+	auto Piece = [](const FText& Name, int32 Width, int32 Height)
+	{
+		FCraftPatternPiece Result;
+		Result.Name = Name;
+		Result.Width = Width;
+		Result.Height = Height;
+		return Result;
+	};
 
 	// ---- Garment blueprints ----
 	{
@@ -39,6 +53,11 @@ UCraftSettings::UCraftSettings()
 		Cloak.BaseWeight = 1.0f;
 		Cloak.MaxWeight = 1.6f;
 		Cloak.BaseCoverage = 0.7f;
+		Cloak.Pieces = {
+			Piece(LOCTEXT("CloakBack", "Back"), 5, 8),
+			Piece(LOCTEXT("CloakFront", "Front"), 5, 8),
+			Piece(LOCTEXT("CloakHood", "Hood"), 4, 4) };
+		Cloak.SeamCount = 3;
 
 		FCraftGarmentBlueprint& Vest = Blueprints.AddDefaulted_GetRef();
 		Vest.Id = TEXT("Vest_Guardian");
@@ -47,6 +66,12 @@ UCraftSettings::UCraftSettings()
 		Vest.BaseWeight = 1.6f;
 		Vest.MaxWeight = 3.0f;
 		Vest.BaseCoverage = 0.9f;
+		Vest.Pieces = {
+			Piece(LOCTEXT("VestFront", "Front"), 6, 6),
+			Piece(LOCTEXT("VestBack", "Back"), 6, 6),
+			Piece(LOCTEXT("VestSideL", "Left side"), 3, 5),
+			Piece(LOCTEXT("VestSideR", "Right side"), 3, 5) };
+		Vest.SeamCount = 4;
 	}
 
 	// ---- Customers ----

@@ -85,6 +85,36 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Inscription", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float MotifStabilityBonus = 0.1f;
 
+	// ---- Dye stage: hold to dip ----
+
+	/** Dye depth gained per second while the cloth is held in the vat. */
+	UPROPERTY(Config, EditAnywhere, Category = "Dye", meta = (ClampMin = "0.05"))
+	float DipRate = 0.4f;
+
+	/** The ideal depth window. Below it the colour is pale; above it the wax starts to crack. */
+	UPROPERTY(Config, EditAnywhere, Category = "Dye", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float DipGoodMin = 0.55f;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Dye", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float DipGoodMax = 0.8f;
+
+	/** Stability change from a perfect dip (+) or a ruined one (-). */
+	UPROPERTY(Config, EditAnywhere, Category = "Dye", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float DipStabilityRange = 0.1f;
+
+	// ---- Stitch stage: timing ----
+
+	UPROPERTY(Config, EditAnywhere, Category = "Stitch", meta = (ClampMin = "1"))
+	int32 StitchesPerSeam = 3;
+
+	/** Sweeps of the needle marker per second (there and back = 1). */
+	UPROPERTY(Config, EditAnywhere, Category = "Stitch", meta = (ClampMin = "0.1"))
+	float StitchMarkerSpeed = 0.7f;
+
+	/** Half-width of the target zone around the middle; outside it a stitch counts for nothing. */
+	UPROPERTY(Config, EditAnywhere, Category = "Stitch", meta = (ClampMin = "0.02", ClampMax = "0.5"))
+	float StitchTolerance = 0.25f;
+
 	// ---- Workshop hookup (used only if the cloth has no Canting Canvas component) ----
 
 	/** The cloth actor in the level. An actor with a Canting Canvas component is preferred if one exists. */
