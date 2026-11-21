@@ -15,6 +15,8 @@
 #include "RHI.h"
 #include "TextureResource.h"
 
+#include <algorithm>
+
 DEFINE_LOG_CATEGORY_STATIC(LogCanting, Log, All);
 
 // Stroke points are handed to CantingCore as interleaved doubles (x0, y0, x1, y1, ...).
@@ -101,6 +103,8 @@ void UCantingCanvasComponent::InitCanvas()
 
 	Grid.Init(TextureWidth, TextureHeight);
 	SealedMask.assign(static_cast<size_t>(TextureWidth) * static_cast<size_t>(TextureHeight), uint8_t(0));
+	FilterMask.assign(SealedMask.size(), uint8_t(0));
+	DeflectMask.assign(SealedMask.size(), uint8_t(0));
 	Strokes.Reset();
 	Stats = FCantingInscriptionStats();
 	SetStrokeActive(false);
@@ -398,7 +402,45 @@ void UCantingCanvasComponent::RefreshAnalysis()
 	Stats.EnclosedAreaCm2 = static_cast<float>(static_cast<double>(Regions.EnclosedTexels) / TexelsPerCm2);
 	Stats.WaxCoverage = static_cast<float>(static_cast<double>(Regions.WaxTexels) / TotalTexels);
 
-	// The sealed mask can change anywhere, so send the whole texture (512 x 512 x 4 = 1 MB, once per stroke).
+	// Which ward the drawing makes: sealed cells with curved walls feed the filter ward, straight walls the deflect ward.
+	Stats.bWardsRead = bReadWards;
+	Stats.FilterFill = Stats.DeflectFill = 0.0f;
+	Stats.FilterCells = Stats.DeflectCells = Stats.MixedCells = 0;
+	if (bReadWards)
+	{
+		CantingCore::FWardParams Params;
+		Params.TexelsPerCm = TexelsPerCm;
+		Params.BrushRadiusCm = BrushRadiusCm;
+		Params.GapToleranceCm = SealGapToleranceCm;
+		Params.MinCellCm2 = FMath::Max(static_cast<double>(MinEnclosedAreaCm2), 1.0);
+		Params.MaxCellCm2 = MaxCellAreaCm2;
+		const CantingCore::FWardReading Reading = CantingCore::ReadWards(Grid, Params, &FilterMask, &DeflectMask);
+		const double Full = FMath::Max(static_cast<double>(FullWardCellAreaCm2), 1.0);
+		Stats.FilterFill = static_cast<float>(Reading.FilterPowerCm2 / Full);
+		Stats.DeflectFill = static_cast<float>(Reading.DeflectPowerCm2 / Full);
+		Stats.FilterCells = Reading.FilterCells;
+		Stats.DeflectCells = Reading.DeflectCells;
+		Stats.MixedCells = Reading.MixedCells;
+	}
+	else
+	{
+		std::fill(FilterMask.begin(), FilterMask.end(), uint8_t(0));
+		std::fill(DeflectMask.begin(), DeflectMask.end(), uint8_t(0));
+	}
+#if !UE_BUILD_SHIPPING
+	if (bReadWards && bShowWardReading && GEngine)
+	{
+		const bool bFilter = Stats.FilterFill >= Stats.DeflectFill;
+		const FString Ward = (Stats.FilterFill + Stats.DeflectFill) <= 0.0f ? FString(TEXT("no ward yet (no sealed cells)"))
+			: FString::Printf(TEXT("%s ward"), bFilter ? TEXT("FILTER (poison)") : TEXT("DEFLECT (physical)"));
+		GEngine->AddOnScreenDebugMessage(static_cast<uint64>(GetUniqueID()), 8.0f, FColor::Cyan, FString::Printf(
+			TEXT("Ward reading: %s | filter %d%% (%d cells), deflect %d%% (%d cells), %d in between | wax %d%%"),
+			*Ward, FMath::RoundToInt32(100.0f * Stats.FilterFill), Stats.FilterCells, FMath::RoundToInt32(100.0f * Stats.DeflectFill),
+			Stats.DeflectCells, Stats.MixedCells, FMath::RoundToInt32(100.0f * Stats.WaxCoverage)));
+	}
+#endif
+
+	// The cell masks can change anywhere, so send the whole texture (512 x 512 x 4 = 1 MB, once per stroke).
 	UploadRect(Grid.FullRect());
 	OnInscriptionChanged.Broadcast(Stats);
 }
@@ -413,8 +455,8 @@ void UCantingCanvasComponent::PackRect(const CantingCore::FRectI& Rect, uint8* D
 		for (int32 X = Rect.X0; X < Rect.X1; ++X)
 		{
 			const size_t Index = static_cast<size_t>(Y) * GridWidth + static_cast<size_t>(X);
-			*Out++ = 0;                                          // B
-			*Out++ = SealedMask[Index];                          // G: sealed region
+			*Out++ = DeflectMask[Index];                         // B: deflect share inside sealed cells
+			*Out++ = FilterMask[Index];                          // G: filter share inside sealed cells
 			*Out++ = static_cast<uint8>(255 - Distance[Index]);  // R: wax, 0 = none (the grid stores 255 = none)
 			*Out++ = 255;                                        // A
 		}
