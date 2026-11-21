@@ -299,6 +299,11 @@ void UCraftLoopSubsystem::FinishCanting()
 
 	const FCraftFabric* Fabric = UCraftSettings::Get()->FindFabric(Garment.FabricId);
 	Garment.Inscription = UCraftRules::InterpretInscription(Strokes, Coverage, Enclosed, Fabric ? *Fabric : FCraftFabric(), false, KnownMotifs.Num());
+	if (const UCantingCanvasComponent* Canvas = GetCanvas())
+	{
+		const FCantingInscriptionStats Stats = Canvas->GetStats();
+		UCraftRules::ApplyWardReading(Garment.Inscription, Stats.bWardsRead, Stats.FilterFill, Stats.DeflectFill, Stats.FilterCells, Stats.DeflectCells);
+	}
 	UE_LOG(LogCraftLoop, Log, TEXT("Inscription: strokes %d, coverage %.3f, enclosed %d -> strength %.2f, stability %.2f"),
 		Strokes, Coverage, Enclosed, Garment.Inscription.Strength, Garment.Inscription.Stability);
 
@@ -393,6 +398,9 @@ void UCraftLoopSubsystem::FinishDip(float Depth)
 	const FCraftInscription Measured = Garment.Inscription;
 	Garment.Inscription = UCraftRules::InterpretInscription(Measured.StrokeCount, Measured.WaxCoverage, Measured.EnclosedShapes,
 		Fabric ? *Fabric : FCraftFabric(), bIndigo, KnownMotifs.Num(), Garment.DyeQuality);
+	// Keep the ward the drawing made; the dye only changes stability.
+	UCraftRules::ApplyWardReading(Garment.Inscription, Measured.bWardsRead, Measured.FilterStrength, Measured.DeflectStrength,
+		Measured.FilterCells, Measured.DeflectCells);
 
 	if (Garment.DyeQuality >= 0.99f)
 	{
@@ -801,6 +809,7 @@ bool UCraftLoopSubsystem::GetLiveInscription(FCraftInscription& OutInscription) 
 	const FCraftFabric* Fabric = UCraftSettings::Get()->FindFabric(Garment.FabricId);
 	OutInscription = UCraftRules::InterpretInscription(Stats.StrokeCount, Stats.WaxCoverage, Stats.EnclosedShapes,
 		Fabric ? *Fabric : FCraftFabric(), false, KnownMotifs.Num());
+	UCraftRules::ApplyWardReading(OutInscription, Stats.bWardsRead, Stats.FilterFill, Stats.DeflectFill, Stats.FilterCells, Stats.DeflectCells);
 	return true;
 }
 

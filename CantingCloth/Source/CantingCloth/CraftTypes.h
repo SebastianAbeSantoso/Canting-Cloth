@@ -231,6 +231,29 @@ struct FCraftInscription
 	/** 0-1: how well the ward holds together. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Craft")
 	float Stability = 0.0f;
+
+	/** True when the drawing itself decided the ward (curved walls = filter, straight walls = deflect).
+	 *  False with the legacy render target, or when the canvas has bReadWards off: then the commission decides. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Craft")
+	bool bWardsRead = false;
+
+	/** The ward the drawing makes: whichever family has more power. Only meaningful when bWardsRead. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Craft")
+	ECraftEffectFamily DrawnEffect = ECraftEffectFamily::WardPoison;
+
+	/** 0-1 strength of each ward family on its own (1 = enough sealed cells for a full ward). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Craft")
+	float FilterStrength = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Craft")
+	float DeflectStrength = 0.0f;
+
+	/** Sealed cells that read mostly curved (filter) or mostly straight (deflect). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Craft")
+	int32 FilterCells = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Craft")
+	int32 DeflectCells = 0;
 };
 
 /** Everything the player decided while making the garment, and the stats that come out of it. */

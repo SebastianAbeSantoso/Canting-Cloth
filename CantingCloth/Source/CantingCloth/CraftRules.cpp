@@ -54,6 +54,25 @@ FCraftInscription UCraftRules::InterpretInscription(int32 StrokeCount, float Wax
 	return Result;
 }
 
+void UCraftRules::ApplyWardReading(FCraftInscription& Inscription, bool bWardsRead, float FilterFill, float DeflectFill,
+	int32 FilterCells, int32 DeflectCells)
+{
+	Inscription.bWardsRead = bWardsRead;
+	Inscription.FilterStrength = FMath::Clamp(FilterFill, 0.0f, 1.0f);
+	Inscription.DeflectStrength = FMath::Clamp(DeflectFill, 0.0f, 1.0f);
+	Inscription.FilterCells = FMath::Max(FilterCells, 0);
+	Inscription.DeflectCells = FMath::Max(DeflectCells, 0);
+	if (!bWardsRead)
+	{
+		return;
+	}
+	// The stronger family is the ward. Wax that went into the weaker family still costs capacity (stability).
+	const bool bFilter = Inscription.FilterStrength >= Inscription.DeflectStrength;
+	Inscription.DrawnEffect = bFilter ? ECraftEffectFamily::WardPoison : ECraftEffectFamily::WardPhysical;
+	// Strength now comes from sealed cells, not from how much wax was used: scribbles and open lines give no ward.
+	Inscription.Strength = bFilter ? Inscription.FilterStrength : Inscription.DeflectStrength;
+}
+
 float UCraftRules::CutCoverageMultiplier(float CutLength)
 {
 	return FMath::Clamp(CutLength, MinCutLength, MaxCutLength);
@@ -187,8 +206,8 @@ FCraftGarment UCraftRules::BuildGarment(const FCraftGarment& Choices, const FCra
 	// Seam quality: sloppy stitches (0) lose 15%, perfect ones (1) add 10%.
 	Garment.Durability = Fabric.Durability * CutCoverage * (1.0f - 0.1f * Garment.CrossGrainFraction)
 		* (0.85f + 0.25f * FMath::Clamp(Garment.SeamQuality, 0.0f, 1.0f));
-	// Slice rule: the commission names the effect family; the drawing decides how well it works (GDD open question 3).
-	Garment.Effect = Commission.RequiredEffect;
+	// The drawing decides the ward (design doc D1). Without a ward reading, fall back to the commission's effect.
+	Garment.Effect = Garment.Inscription.bWardsRead ? Garment.Inscription.DrawnEffect : Commission.RequiredEffect;
 	Garment.Protection = 100.0f * Garment.Inscription.Strength * Garment.Inscription.Stability * Garment.Coverage;
 	return Garment;
 }

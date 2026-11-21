@@ -30,7 +30,18 @@ public:
 	static FCraftInscription InterpretInscription(int32 StrokeCount, float WaxCoverage, int32 EnclosedShapes,
 		const FCraftFabric& Fabric, bool bIndigoDye, int32 KnownMotifCount, float DyeQuality = 0.5f);
 
-	/** Fills Weight, Coverage, Durability, Effect and Protection from the player's choices. */
+	/**
+	 * Lets the drawing decide the ward. Stores each family's fill (1 = full ward) and cell counts in the inscription,
+	 * then, if bWardsRead and any sealed cell exists, sets DrawnEffect to the stronger family and Strength to its fill
+	 * (capped at 1). Call after InterpretInscription, which sets Strength from wax alone.
+	 * With bWardsRead false the inscription is left as InterpretInscription made it, and BuildGarment uses the
+	 * commission's effect (the sprint plan's fallback).
+	 */
+	static void ApplyWardReading(FCraftInscription& Inscription, bool bWardsRead, float FilterFill, float DeflectFill,
+		int32 FilterCells, int32 DeflectCells);
+
+	/** Fills Weight, Coverage, Durability, Effect and Protection from the player's choices.
+	 *  The effect comes from the drawing when Inscription.bWardsRead, otherwise from the commission. */
 	UFUNCTION(BlueprintPure, Category = "Craft|Rules")
 	static FCraftGarment BuildGarment(const FCraftGarment& Choices, const FCraftCommission& Commission,
 		const FCraftGarmentBlueprint& Blueprint, const FCraftFabric& Fabric);

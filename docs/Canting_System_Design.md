@@ -215,7 +215,7 @@ Tools, motif stencils and grammar constants live in `UCraftSettings` (Project Se
 
 | Texture | R | G | B | A |
 |---|---|---|---|---|
-| WaxField (exists) | Wax: 0 = none, about 0.5 = edge, 1 = deep inside | Sealed cells today; filter cells later | Deflect cells | Warnings: leak gaps, crowded spots |
+| WaxField (exists) | Wax: 0 = none, about 0.5 = edge, 1 = deep inside | Filter share inside sealed cells | Deflect share inside sealed cells | Warnings: leak gaps, crowded spots (later) |
 | GuideField (new) | Pencil (njaplak) distance | Motif stencil | Nge-jos residue | — |
 
 `M_BatikCloth` decodes both in one Custom HLSL node. A `ShowFeedback` parameter is 1 while canting and 0 afterwards. In every channel 0 means "nothing", so a black or missing texture (such as the `RT_CantingWax` default) shows clean cloth.
@@ -281,6 +281,8 @@ The packages are numbered in dependency order. How they are scheduled, split or 
 - Editor: add Canting Canvas to `BP_ClothActor` and call Draw At UV from its `DrawWaxAtUV` event (the old drawing nodes after the event can go). Give `M_BatikCloth` the `WaxField` parameter and the decode node from §6.3. `BP_WorkshopController` needs no change. Draw in PIE, then play one Scout commission through.
 - Recording: save at least 20 real drawings for M1 (Gringsing scales, Tambal patchwork, free-hand circles and squares) and commit the `CantingDrawings` folder.
 - Team: align the commission content with the World doc (names, anomalies, rewards, §5.5) and agree on D1–D9.
+
+**Sprint Sunday 22 (done, in `CantingStructure`):** the slice version of M1 and M2. Sealed cells are found with a 1 cm gap tolerance; each cell's walls are measured 0.3 cm outside its edge; corners at 38° of turning; a wall is curved if it bows more than 15% of its chord; curved share ≥ 0.45 reads filter, ≤ 0.25 deflect, linear in between; cells 3× longer than wide read deflect (bands). Each cell counts for at most 60 cm², and 720 cm² of sealed cells makes a full ward, so a full ward needs about 12 cells: a repeated pattern, not one or two symbols. The stronger family becomes the garment's effect and its fill becomes Strength; stability keeps the existing formula. `bReadWards` on the canvas turns it off (the commission then picks the effect). These values were tuned on the drawings in `CantingCloth/CantingDrawings` with `docs/canting_spikes/read_drawings.cpp`: 95% of ward power goes the intended way across 8 labelled drawings. `example_gringsing` and `example_tambal` there load in-game with `Canting.LoadStrokes`. Not yet in: isen, charges, symmetry, per-family protection.
 
 **M1. Structure analysis**
 - C++: the `CantingStructure` core with engine-free tests, and a minimal cecek toggle so outline and isen strokes are separate from the start. A `Canting.Debug` console overlay outlines each cell and labels its walls.
