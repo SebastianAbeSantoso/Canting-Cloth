@@ -215,22 +215,24 @@ Tools, motif stencils and grammar constants live in `UCraftSettings` (Project Se
 
 | Texture | R | G | B | A |
 |---|---|---|---|---|
-| WaxField (exists) | Wax distance | Filter cells | Deflect cells | Warnings: leak gaps, crowded spots |
+| WaxField (exists) | Wax: 0 = none, about 0.5 = edge, 1 = deep inside | Sealed cells today; filter cells later | Deflect cells | Warnings: leak gaps, crowded spots |
 | GuideField (new) | Pencil (njaplak) distance | Motif stencil | Nge-jos residue | — |
 
-`M_BatikCloth` decodes both in one Custom HLSL node. A `ShowFeedback` parameter is 1 while canting and 0 afterwards.
+`M_BatikCloth` decodes both in one Custom HLSL node. A `ShowFeedback` parameter is 1 while canting and 0 afterwards. In every channel 0 means "nothing", so a black or missing texture (such as the `RT_CantingWax` default) shows clean cloth.
 
-The wax part of that node already works with today's component. The `WaxField` texture parameter must use Sampler Type **Linear Color**, and its R channel goes into input `D`:
+The wax part of that node already works with today's component. The `WaxField` texture parameter's R channel goes into input `D`:
 
 ```hlsl
-float d = (D - 0.5) * 16.0;                        // wax distance in texels (16 = 2 x BandTexels)
+float d = (0.5 - D) * 16.0;                        // wax distance in texels, negative inside (16 = 2 x BandTexels)
 float w = max(abs(ddx(d)) + abs(ddy(d)), 0.0001);
 return saturate(0.5 - d / w);                      // wax coverage, anti-aliased
 ```
 
 ### 6.4 Input
 
-Panels are flat, so the UV comes from intersecting the mouse ray with the panel's plane. No physics UV lookup is needed. The component ends the stroke when the cursor leaves a panel, and it ignores input unless `IsCantingActive()` is true. That replaces the collision toggling.
+Panels are flat, so the UV comes from intersecting the mouse ray with the panel's plane. No physics UV lookup is needed. The input component ignores input unless `IsCantingActive()` is true, which replaces the collision toggling.
+
+Ending strokes needs no input wiring: `UCantingCanvasComponent` ends a stroke by itself when Draw At UV hasn't arrived for a frame (mouse released or off the cloth), and a call that arrives after a missed frame starts a new stroke. A line therefore never jumps across a gap where the cursor left the cloth.
 
 ### 6.5 Persistence and determinism
 
@@ -258,7 +260,7 @@ The packages are numbered in dependency order. How they are scheduled, split or 
 
 | | Package | Core? | Done when |
 |---|---|---|---|
-| M0 | Canvas in the editor, stroke recording | core | One stroke drawn in PIE shows on the cloth at the same width fast and slow, the cloth looks clean before the first stroke, the loop runs end to end, and a saved drawing loads back identically |
+| M0 | Canvas in the editor, stroke recording | core | In PIE: the cloth looks clean before the first stroke; strokes keep the same width fast and slow; a stroke ends when the mouse leaves the cloth, and coming back starts a new one instead of a line across the gap; a drawn design carries through one full Scout commission. A saved drawing loads back identically. |
 | M1 | Structure analysis | core | Fixture tests pass (see below) and analysis stays under 8 ms per panel |
 | M2 | Wards from the drawing | core | Recorded drawings land in the §5.4 bands in an automation test; watch and skip give the same result |
 | M3 | Live feedback | core | 3 playtesters who haven't seen the game can each say why a cell does or doesn't count, without being told |
@@ -275,9 +277,9 @@ The packages are numbered in dependency order. How they are scheduled, split or 
 **Smallest version that still meets the canting items of GDD §14.3:** M0–M3 and M8. That means one cloth panel, rules 1–3 from §5.1 (fill raises a cell from half to full power, no charges), stability from the existing formula, one protection value per family on the garment, and a learned motif helping only its own family. Rule 5 can be a marked zone on the single panel.
 
 **M0. Canvas in the editor, stroke recording**
-- Editor: add Canting Canvas to `BP_ClothActor`; call Draw At UV and End Stroke from its `DrawWaxAtUV` and `EndStroke` events; in `BP_WorkshopController`, also call End Stroke when the trace misses the cloth; give `M_BatikCloth` the `WaxField` parameter and the decode node from §6.3. Draw in PIE, then run `Craft.AutoPlay` in the console.
-- Check: the cloth must look clean before the first stroke. If it looks waxed or noisy, the first texture upload was lost; write the clean pixels into the texture's initial data before `UpdateResource()`. This is a precaution; the problem is not confirmed for UE 5.8.
-- C++: `Canting.SaveStrokes <name>` and `Canting.LoadStrokes <name>` (JSON in `Saved/Canting/`) so real drawings can be collected for tuning, and an automation test setup.
+- C++ (done): the texture's memory is filled with clean cloth before the GPU copy is made; every texture channel uses 0 = nothing (§6.3); the component ends strokes by itself (§6.4); a warning appears on screen in PIE if the cloth material has no `WaxField` parameter; `Canting.SaveStrokes <name>` and `Canting.LoadStrokes <name>` write and read plain-text drawings in `<project>/CantingDrawings/`, at full precision so a loaded drawing gives the same wax and stats. Tested outside the engine against stand-in headers; not yet compiled in Unreal.
+- Editor: add Canting Canvas to `BP_ClothActor` and call Draw At UV from its `DrawWaxAtUV` event (the old drawing nodes after the event can go). Give `M_BatikCloth` the `WaxField` parameter and the decode node from §6.3. `BP_WorkshopController` needs no change. Draw in PIE, then play one Scout commission through.
+- Recording: save at least 20 real drawings for M1 (Gringsing scales, Tambal patchwork, free-hand circles and squares) and commit the `CantingDrawings` folder.
 - Team: align the commission content with the World doc (names, anomalies, rewards, §5.5) and agree on D1–D9.
 
 **M1. Structure analysis**
@@ -286,7 +288,7 @@ The packages are numbered in dependency order. How they are scheduled, split or 
 - Targets: Gringsing scales and ovals read curved; Tambal cells and squares at least 6 cm across read straight; grazing, touching and repeated isen dots count by area. Thresholds (the 10% wall bow, the corner angle) are set from the recorded drawings, not the synthetic ones.
 
 **M2. Wards from the drawing**
-- C++: `CantingTypes`, grammar settings, `UCantingInterpreter`. `BuildGarment` and `ResolveExpedition` use wards and charges. Commissions get event scripts. Canting time follows D7. Inspect lists each ward.
+- C++: an automation test setup, `CantingTypes`, grammar settings, `UCantingInterpreter`. `BuildGarment` and `ResolveExpedition` use wards and charges. Commissions get event scripts. Canting time follows D7. Inspect lists each ward.
 
 **M3. Live feedback**
 - C++: the feedback channels (per-cell tint by family, leak markers), and a HUD readout showing each ward's strength, stability and charges, plus leaks and capacity.

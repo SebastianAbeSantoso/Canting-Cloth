@@ -1,10 +1,21 @@
 #include "CantingCanvasComponent.h"
 
 #include "Components/StaticMeshComponent.h"
+#include "CoreGlobals.h"
+#include "Engine/Engine.h"
 #include "Engine/Texture2D.h"
+#include "EngineUtils.h"
 #include "GameFramework/Actor.h"
+#include "HAL/FileManager.h"
+#include "HAL/IConsoleManager.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInterface.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 #include "RHI.h"
+#include "TextureResource.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogCanting, Log, All);
 
 // Stroke points are handed to CantingCore as interleaved doubles (x0, y0, x1, y1, ...).
 static_assert(sizeof(FVector2D) == 2 * sizeof(double), "FVector2D must be two doubles");
@@ -15,11 +26,51 @@ namespace
 	{
 		return reinterpret_cast<const double*>(Points.GetData());
 	}
+
+	/** Logs a message and, outside shipping builds, shows it on screen so problems are visible in PIE. */
+	void Report(const FString& Message, bool bWarning)
+	{
+		if (bWarning)
+		{
+			UE_LOG(LogCanting, Warning, TEXT("%s"), *Message);
+		}
+		else
+		{
+			UE_LOG(LogCanting, Log, TEXT("%s"), *Message);
+		}
+#if !UE_BUILD_SHIPPING
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, bWarning ? 20.0f : 6.0f, bWarning ? FColor::Orange : FColor::Cyan, Message);
+		}
+#endif
+	}
+
+	bool HasTextureParameter(UMaterialInterface* Material, FName Name)
+	{
+		if (!Material)
+		{
+			return false;
+		}
+		TArray<FMaterialParameterInfo> Infos;
+		TArray<FGuid> Ids;
+		Material->GetAllTextureParameterInfo(Infos, Ids);
+		for (const FMaterialParameterInfo& Info : Infos)
+		{
+			if (Info.Name == Name)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
 }
 
 UCantingCanvasComponent::UCantingCanvasComponent()
 {
-	PrimaryComponentTick.bCanEverTick = false;
+	// Ticks only while a stroke is open, to end it when DrawAtUV stops arriving.
+	PrimaryComponentTick.bCanEverTick = true;
+	PrimaryComponentTick.bStartWithTickEnabled = false;
 }
 
 void UCantingCanvasComponent::BeginPlay()
@@ -27,6 +78,17 @@ void UCantingCanvasComponent::BeginPlay()
 	Super::BeginPlay();
 	InitCanvas();
 	ConnectMaterial();
+}
+
+void UCantingCanvasComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+{
+	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+	// No DrawAtUV for a whole frame: the mouse was released or left the cloth.
+	if (bStrokeActive && GFrameCounter > LastDrawFrame + 1)
+	{
+		EndStroke();
+	}
 }
 
 void UCantingCanvasComponent::InitCanvas()
@@ -41,18 +103,34 @@ void UCantingCanvasComponent::InitCanvas()
 	SealedMask.assign(static_cast<size_t>(TextureWidth) * static_cast<size_t>(TextureHeight), uint8_t(0));
 	Strokes.Reset();
 	Stats = FCantingInscriptionStats();
-	bStrokeActive = false;
+	SetStrokeActive(false);
 
 	WaxTexture = UTexture2D::CreateTransient(TextureWidth, TextureHeight, PF_B8G8R8A8);
 	if (!WaxTexture)
 	{
-		UE_LOG(LogTemp, Error, TEXT("CantingCanvas: could not create the wax texture."));
+		Report(TEXT("CantingCanvas: could not create the wax texture."), true);
 		return;
 	}
 	WaxTexture->SRGB = false;           // the texture stores distances, not colours
 	WaxTexture->Filter = TF_Bilinear;
 	WaxTexture->AddressX = TA_Clamp;
 	WaxTexture->AddressY = TA_Clamp;
+
+	// Put the clean cloth into the texture's own memory before the GPU copy is made, so the first frames
+	// can't show leftover bytes as wax even if the first region update arrives late.
+	if (FTexturePlatformData* PlatformData = WaxTexture->GetPlatformData())
+	{
+		if (PlatformData->Mips.Num() > 0)
+		{
+			FTexture2DMipMap& Mip = PlatformData->Mips[0];
+			uint8* MipData = static_cast<uint8*>(Mip.BulkData.Lock(LOCK_READ_WRITE));
+			if (MipData && Mip.BulkData.GetBulkDataSize() >= static_cast<int64>(TextureWidth) * TextureHeight * 4)
+			{
+				PackRect(Grid.FullRect(), MipData, TextureWidth * 4);
+			}
+			Mip.BulkData.Unlock();
+		}
+	}
 	WaxTexture->UpdateResource();
 	UploadRect(Grid.FullRect());
 }
@@ -63,16 +141,28 @@ void UCantingCanvasComponent::ConnectMaterial()
 	UStaticMeshComponent* Mesh = OwnerActor ? OwnerActor->FindComponentByClass<UStaticMeshComponent>() : nullptr;
 	if (!Mesh || !WaxTexture)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("CantingCanvas: no Static Mesh component on the owner, wax will not be visible."));
+		Report(TEXT("CantingCanvas: the cloth actor has no Static Mesh component, so the wax won't be visible."), true);
 		return;
 	}
 	ClothMaterial = Mesh->CreateDynamicMaterialInstance(MaterialIndex);
 	if (!ClothMaterial)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("CantingCanvas: material slot %d has no material."), MaterialIndex);
+		Report(FString::Printf(TEXT("CantingCanvas: material slot %d on %s has no material."), MaterialIndex, *Mesh->GetName()), true);
 		return;
 	}
 	ClothMaterial->SetTextureParameterValue(TextureParameterName, WaxTexture);
+	if (!HasTextureParameter(ClothMaterial.Get(), TextureParameterName))
+	{
+		Report(FString::Printf(
+			TEXT("CantingCanvas: %s has no texture parameter named %s, so the wax won't show. In the material, right-click the wax Texture Sample, choose Convert to Parameter, and name it %s."),
+			*GetNameSafe(ClothMaterial->GetMaterial()), *TextureParameterName.ToString(), *TextureParameterName.ToString()), true);
+	}
+}
+
+void UCantingCanvasComponent::SetStrokeActive(bool bActive)
+{
+	bStrokeActive = bActive;
+	SetComponentTickEnabled(bActive);
 }
 
 void UCantingCanvasComponent::DrawAtUV(FVector2D UV)
@@ -81,6 +171,16 @@ void UCantingCanvasComponent::DrawAtUV(FVector2D UV)
 	{
 		return;
 	}
+
+	// A missed frame means the cursor left the cloth (or drawing was blocked) and has come back.
+	// End the old stroke there, so the line doesn't jump across the gap.
+	const uint64 Frame = GFrameCounter;
+	if (bStrokeActive && Frame > LastDrawFrame + 1)
+	{
+		EndStroke();
+	}
+	LastDrawFrame = Frame;
+
 	const FVector2D PointCm(FMath::Clamp(UV.X, 0.0, 1.0) * PanelSizeCm.X, FMath::Clamp(UV.Y, 0.0, 1.0) * PanelSizeCm.Y);
 	LastSampleCm = PointCm;
 
@@ -89,7 +189,7 @@ void UCantingCanvasComponent::DrawAtUV(FVector2D UV)
 		FCantingStroke& NewStroke = Strokes.AddDefaulted_GetRef();
 		NewStroke.RadiusCm = BrushRadiusCm;
 		NewStroke.PointsCm.Add(PointCm);
-		bStrokeActive = true;
+		SetStrokeActive(true);
 		UploadRect(StampLastPoints(NewStroke, 1));
 		return;
 	}
@@ -109,9 +209,9 @@ void UCantingCanvasComponent::EndStroke()
 	{
 		return;
 	}
-	bStrokeActive = false;
+	SetStrokeActive(false);
 
-	// Reach the exact spot where the mouse was released, even if it was closer than MinPointSpacingCm.
+	// Reach the last spot the cursor touched, even if it was closer than MinPointSpacingCm.
 	FCantingStroke& Stroke = Strokes.Last();
 	if (FVector2D::Distance(Stroke.PointsCm.Last(), LastSampleCm) > 0.01)
 	{
@@ -129,7 +229,7 @@ bool UCantingCanvasComponent::UndoLastStroke()
 	}
 	const CantingCore::FRectI Affected = StrokeBounds(Strokes.Last());
 	Strokes.Pop();
-	bStrokeActive = false;
+	SetStrokeActive(false);
 	RebuildRegion(Affected);
 	RefreshAnalysis();
 	return true;
@@ -142,9 +242,100 @@ void UCantingCanvasComponent::ClearInscription()
 		return;
 	}
 	Strokes.Reset();
-	bStrokeActive = false;
+	SetStrokeActive(false);
 	Grid.Clear(Grid.FullRect());
 	RefreshAnalysis();
+}
+
+FString UCantingCanvasComponent::DrawingPath(const FString& Name)
+{
+	const FString FileName = FPaths::MakeValidFileName(Name.IsEmpty() ? FString(TEXT("drawing")) : Name, TEXT('_')) + TEXT(".txt");
+	return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), TEXT("CantingDrawings"), FileName));
+}
+
+bool UCantingCanvasComponent::SaveStrokesToFile(const FString& Name, FString& OutPath)
+{
+	EndStroke();
+	OutPath = DrawingPath(Name);
+
+	// Plain text, one stroke per line, so drawings can be read by the engine-free tests too. Numbers are written
+	// with full precision, so a loaded drawing gives exactly the same wax and stats as the original:
+	//   CantingStrokes 1
+	//   panel <width cm> <height cm>
+	//   stroke <radius cm> <x0> <y0> <x1> <y1> ...
+	FString Text = FString::Printf(TEXT("CantingStrokes 1\npanel %.17g %.17g\n"), PanelSizeCm.X, PanelSizeCm.Y);
+	for (const FCantingStroke& Stroke : Strokes)
+	{
+		Text += FString::Printf(TEXT("stroke %.9g"), Stroke.RadiusCm);
+		for (const FVector2D& Point : Stroke.PointsCm)
+		{
+			Text += FString::Printf(TEXT(" %.17g %.17g"), Point.X, Point.Y);
+		}
+		Text += TEXT("\n");
+	}
+
+	IFileManager::Get().MakeDirectory(*FPaths::GetPath(OutPath), true);
+	if (!FFileHelper::SaveStringToFile(Text, *OutPath))
+	{
+		Report(FString::Printf(TEXT("CantingCanvas: could not write %s"), *OutPath), true);
+		return false;
+	}
+	Report(FString::Printf(TEXT("CantingCanvas: saved %d strokes to %s"), Strokes.Num(), *OutPath), false);
+	return true;
+}
+
+bool UCantingCanvasComponent::LoadStrokesFromFile(const FString& Name)
+{
+	if (!Grid.IsValid())
+	{
+		return false;
+	}
+	const FString Path = DrawingPath(Name);
+	FString Text;
+	if (!FFileHelper::LoadFileToString(Text, *Path))
+	{
+		Report(FString::Printf(TEXT("CantingCanvas: could not read %s"), *Path), true);
+		return false;
+	}
+
+	TArray<FString> Lines;
+	Text.ParseIntoArrayLines(Lines);
+	TArray<FCantingStroke> Loaded;
+	FVector2D FilePanel = PanelSizeCm;
+	for (const FString& Line : Lines)
+	{
+		TArray<FString> Parts;
+		Line.ParseIntoArrayWS(Parts);
+		if (Parts.Num() >= 3 && Parts[0] == TEXT("panel"))
+		{
+			FilePanel = FVector2D(FCString::Atod(*Parts[1]), FCString::Atod(*Parts[2]));
+		}
+		else if (Parts.Num() >= 4 && Parts[0] == TEXT("stroke"))
+		{
+			FCantingStroke& Stroke = Loaded.AddDefaulted_GetRef();
+			Stroke.RadiusCm = FCString::Atof(*Parts[1]);
+			for (int32 Index = 2; Index + 1 < Parts.Num(); Index += 2)
+			{
+				Stroke.PointsCm.Add(FVector2D(FCString::Atod(*Parts[Index]), FCString::Atod(*Parts[Index + 1])));
+			}
+		}
+	}
+	if (!FilePanel.Equals(PanelSizeCm, 0.01))
+	{
+		Report(FString::Printf(TEXT("CantingCanvas: %s was drawn on a %.0f x %.0f cm panel; this one is %.0f x %.0f cm. Loading it as it is."),
+			*Path, FilePanel.X, FilePanel.Y, PanelSizeCm.X, PanelSizeCm.Y), true);
+	}
+
+	Strokes = MoveTemp(Loaded);
+	SetStrokeActive(false);
+	Grid.Clear(Grid.FullRect());
+	for (const FCantingStroke& Stroke : Strokes)
+	{
+		StampStroke(Stroke, nullptr);
+	}
+	RefreshAnalysis();
+	Report(FString::Printf(TEXT("CantingCanvas: loaded %d strokes from %s"), Strokes.Num(), *Path), false);
+	return true;
 }
 
 CantingCore::FRectI UCantingCanvasComponent::StampStroke(const FCantingStroke& Stroke, const CantingCore::FRectI* Clip)
@@ -222,10 +413,10 @@ void UCantingCanvasComponent::PackRect(const CantingCore::FRectI& Rect, uint8* D
 		for (int32 X = Rect.X0; X < Rect.X1; ++X)
 		{
 			const size_t Index = static_cast<size_t>(Y) * GridWidth + static_cast<size_t>(X);
-			*Out++ = 0;                  // B
-			*Out++ = SealedMask[Index];  // G: sealed region
-			*Out++ = Distance[Index];    // R: wax distance
-			*Out++ = 255;                // A
+			*Out++ = 0;                                          // B
+			*Out++ = SealedMask[Index];                          // G: sealed region
+			*Out++ = static_cast<uint8>(255 - Distance[Index]);  // R: wax, 0 = none (the grid stores 255 = none)
+			*Out++ = 255;                                        // A
 		}
 	}
 }
@@ -255,3 +446,58 @@ void UCantingCanvasComponent::UploadRect(const CantingCore::FRectI& InRect)
 			delete UsedRegion;
 		});
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Console commands for collecting and replaying drawings (not in shipping builds)
+
+#if !UE_BUILD_SHIPPING
+namespace
+{
+	UCantingCanvasComponent* FindCanvas(UWorld* World)
+	{
+		if (!World)
+		{
+			return nullptr;
+		}
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (UCantingCanvasComponent* Canvas = It->FindComponentByClass<UCantingCanvasComponent>())
+			{
+				return Canvas;
+			}
+		}
+		return nullptr;
+	}
+
+	FAutoConsoleCommandWithWorldAndArgs GCantingSaveStrokesCommand(
+		TEXT("Canting.SaveStrokes"),
+		TEXT("Saves the cloth's strokes to <project>/CantingDrawings/<name>.txt. Usage: Canting.SaveStrokes <name>"),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+		{
+			if (UCantingCanvasComponent* Canvas = FindCanvas(World))
+			{
+				FString Path;
+				Canvas->SaveStrokesToFile(Args.Num() > 0 ? Args[0] : FString(TEXT("drawing")), Path);
+			}
+			else
+			{
+				UE_LOG(LogCanting, Warning, TEXT("Canting.SaveStrokes: no Canting Canvas in this world. Run it while playing."));
+			}
+		}));
+
+	FAutoConsoleCommandWithWorldAndArgs GCantingLoadStrokesCommand(
+		TEXT("Canting.LoadStrokes"),
+		TEXT("Replaces the cloth's drawing with <project>/CantingDrawings/<name>.txt. Usage: Canting.LoadStrokes <name>"),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+		{
+			if (UCantingCanvasComponent* Canvas = FindCanvas(World))
+			{
+				Canvas->LoadStrokesFromFile(Args.Num() > 0 ? Args[0] : FString(TEXT("drawing")));
+			}
+			else
+			{
+				UE_LOG(LogCanting, Warning, TEXT("Canting.LoadStrokes: no Canting Canvas in this world. Run it while playing."));
+			}
+		}));
+}
+#endif

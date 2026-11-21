@@ -3,6 +3,7 @@
 // Stores, per texel, the signed distance to the nearest wax stroke (negative inside wax),
 // clamped to +/- BandTexels and packed into one byte: 0 = deep inside, about 128 = wax edge, 255 = no wax nearby.
 // Overlapping strokes keep the smaller distance, so line width never depends on cursor speed or overlap.
+// The canvas component writes 255 minus this byte into the texture, so on the GPU 0 means "no wax".
 //
 // Uses only the C++ standard library so the math can be tested outside Unreal.
 
@@ -30,8 +31,8 @@ namespace CantingCore
 	class FWaxGrid
 	{
 	public:
-		// Half-width of the stored distance band. M_BatikCloth decodes with the same value:
-		// distance = (R - 0.5) * 2 * BandTexels, i.e. (R - 0.5) * 16.
+		// Half-width of the stored distance band. M_BatikCloth decodes the texture's R channel with the same value:
+		// distance = (0.5 - R) * 2 * BandTexels, i.e. (0.5 - R) * 16.
 		static constexpr float BandTexels = 8.0f;
 
 		void Init(int InWidth, int InHeight);

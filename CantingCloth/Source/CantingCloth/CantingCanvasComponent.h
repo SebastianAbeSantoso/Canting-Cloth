@@ -1,13 +1,17 @@
 // Canting canvas: add this component to BP_ClothActor.
 //
-// Blueprint calls DrawAtUV every tick while the mouse is held and EndStroke on release.
+// Blueprint calls DrawAtUV every tick while the mouse is held on the cloth. The component ends the
+// stroke by itself when DrawAtUV stops arriving (mouse released or moved off the cloth); calling
+// EndStroke on release is optional and only makes it end one frame sooner.
+//
 // The component stores every stroke as points in panel centimetres (the source of truth),
 // keeps a wax distance grid in memory, uploads only the changed pixels to a texture,
 // and counts enclosed (sealed) shapes when a stroke ends.
 //
-// Texture channels read by M_BatikCloth:
-//   R = wax signed distance (0.5 = wax edge; decode with (R - 0.5) * 16)
-//   G = 1 inside sealed (enclosed) regions, 0 elsewhere
+// Texture channels read by M_BatikCloth (0 means "nothing" in every channel):
+//   R = wax: 0 = no wax nearby, about 0.5 = wax edge, 1 = deep inside the wax.
+//       Signed distance in texels: d = (0.5 - R) * 16 (negative inside the wax).
+//   G = 1 inside sealed (enclosed) regions, 0 elsewhere.
 
 #pragma once
 
@@ -98,15 +102,15 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Canting|Rules", meta = (ClampMin = "0.0"))
 	float MinEnclosedAreaCm2 = 1.0f;
 
-	/** Fires after a stroke ends, an undo, or a clear. */
+	/** Fires after a stroke ends, an undo, a clear, or a load. */
 	UPROPERTY(BlueprintAssignable, Category = "Canting")
 	FOnCantingInscriptionChanged OnInscriptionChanged;
 
-	/** Call every tick while drawing. Starts a stroke automatically on the first call. */
+	/** Call every tick while drawing. Starts a stroke on the first call, and starts a new one after a missed frame. */
 	UFUNCTION(BlueprintCallable, Category = "Canting")
 	void DrawAtUV(FVector2D UV);
 
-	/** Call when the mouse button is released. Updates the stats and fires OnInscriptionChanged. */
+	/** Ends the current stroke now. Optional: the component also ends it one frame after DrawAtUV stops. */
 	UFUNCTION(BlueprintCallable, Category = "Canting")
 	void EndStroke();
 
@@ -117,6 +121,20 @@ public:
 	/** Removes all strokes. */
 	UFUNCTION(BlueprintCallable, Category = "Canting")
 	void ClearInscription();
+
+	/**
+	 * Writes the strokes to <project>/CantingDrawings/<Name>.txt, for tuning and replaying drawings.
+	 * Console: Canting.SaveStrokes <Name>
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Canting|Debug")
+	bool SaveStrokesToFile(const FString& Name, FString& OutPath);
+
+	/**
+	 * Replaces the drawing with the strokes in <project>/CantingDrawings/<Name>.txt.
+	 * Console: Canting.LoadStrokes <Name>
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Canting|Debug")
+	bool LoadStrokesFromFile(const FString& Name);
 
 	UFUNCTION(BlueprintPure, Category = "Canting")
 	FCantingInscriptionStats GetStats() const { return Stats; }
@@ -130,12 +148,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Canting")
 	UTexture2D* GetWaxTexture() const { return WaxTexture; }
 
+	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+
 protected:
 	virtual void BeginPlay() override;
 
 private:
 	void InitCanvas();
 	void ConnectMaterial();
+	void SetStrokeActive(bool bActive);
 	CantingCore::FRectI StampStroke(const FCantingStroke& Stroke, const CantingCore::FRectI* Clip);
 	CantingCore::FRectI StampLastPoints(const FCantingStroke& Stroke, int32 NumPoints);
 	CantingCore::FRectI StrokeBounds(const FCantingStroke& Stroke) const;
@@ -143,6 +164,7 @@ private:
 	void RefreshAnalysis();
 	void PackRect(const CantingCore::FRectI& Rect, uint8* Dest, int32 DestPitch) const;
 	void UploadRect(const CantingCore::FRectI& Rect);
+	static FString DrawingPath(const FString& Name);
 
 	UPROPERTY(VisibleInstanceOnly, Category = "Canting|Debug")
 	TArray<FCantingStroke> Strokes;
@@ -160,5 +182,7 @@ private:
 	std::vector<uint8_t> SealedMask;
 	FVector2D LastSampleCm = FVector2D::ZeroVector;
 	double TexelsPerCm = 1.0;
+	/** Engine frame of the last DrawAtUV call; a gap of a frame or more ends the stroke. */
+	uint64 LastDrawFrame = 0;
 	bool bStrokeActive = false;
 };
